@@ -2,7 +2,7 @@
 
 Stream your Real-Debrid library in Plex: Real-Debrid → Zurg → rclone → Plex, isolated and LAN-only.
 
-> Designed, written and tested by [Claude](https://claude.ai) (Anthropic) with [007games](https://github.com/007games).
+> Designed and written by [Claude](https://claude.ai) (Anthropic) with [007games](https://github.com/007games).
 
 ## Install
 
