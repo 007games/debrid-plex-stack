@@ -9,7 +9,7 @@ flock -n 9 || exit 0
 FAILS=/tmp/debrid-watchdog.fails
 
 [ -f "$STACK_DIR/MAINTENANCE" ] && exit 0
-"$DOCKER" inspect zurg >/dev/null 2>&1 || exit 0   # stack deliberately down
+"$DOCKER" inspect plex >/dev/null 2>&1 || exit 0   # stack deliberately down
 
 ensure_firewall
 
@@ -18,7 +18,7 @@ if [ "${dmem:-0}" -gt 2048 ]; then
   log "warning: dockerd using ${dmem} MB RAM; top containers: $("$DOCKER" stats --no-stream --format '{{.Name}}={{.MemUsage}}' 2>/dev/null | sort -t= -k2 -h -r | head -3 | tr '\n' ' ')"
 fi
 
-if container_running zurg && container_running rclone && container_running plex && mount_ok; then
+if all_running && mount_ok; then
   rm -f "$FAILS"
   exit 0
 fi
@@ -31,7 +31,7 @@ if [ "$n" -lt 2 ]; then
 fi
 
 log "watchdog: unhealthy twice in a row, recovering"
-compose stop plex rclone >>"$LOG" 2>&1
+compose stop plex "$MOUNTER" >>"$LOG" 2>&1
 unmount_stale
 ensure_shared_mnt
 if ! zurg_ok; then

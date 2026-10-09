@@ -1,0 +1,55 @@
+# EXPERIMENTAL: TorBox -> TorBox Media Center (official, FUSE) -> ./mnt/torbox/{movies,series}
+#
+#   internet <── debrid_egress ── torbox ── ./mnt/torbox (FUSE)
+#
+# Needs a paid TorBox plan. The mount container needs internet access (TorBox API
+# and CDN), so it can't be isolated like rclone in the Real-Debrid setup.
+# Project: https://github.com/TorBox-App/torbox-media-center
+
+services:
+  torbox:
+    # The Docker Hub "latest" tag is stale (crashes with FUSE); use GHCR.
+    image: ${TORBOX_IMAGE:-ghcr.io/torbox-app/torbox-media-center:main@sha256:4ae8feda1cd9d622cdf740a634b3b054c0dad17a49211a3824f241cf9afb67ba}
+    container_name: torbox
+    restart: unless-stopped
+    init: true
+    networks:
+      - debrid_egress
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      - TORBOX_API_KEY=${TORBOX_API_KEY:?set TORBOX_API_KEY in .env}
+      - MOUNT_METHOD=fuse
+      - MOUNT_PATH=/data/torbox
+      - MOUNT_REFRESH_TIME=${TORBOX_REFRESH:-fast}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - type: bind
+        source: ./mnt
+        target: /data
+        bind:
+          propagation: rshared
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /data/torbox fuse' /proc/mounts && timeout 10 ls /data/torbox >/dev/null"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    stop_grace_period: 30s
+    mem_limit: 1g
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  plex:
+    depends_on:
+      torbox:
+        condition: service_healthy

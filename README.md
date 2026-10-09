@@ -1,6 +1,6 @@
 # debrid-plex-stack
 
-Stream your Real-Debrid library in Plex: Real-Debrid → Zurg → rclone → Plex, isolated and LAN-only.
+Stream your Real-Debrid (or TorBox) library in Plex: isolated, LAN-only, one command to install.
 
 > Designed and written by [Claude](https://claude.ai) (Anthropic) with [007games](https://github.com/007games).
 
@@ -10,9 +10,9 @@ Stream your Real-Debrid library in Plex: Real-Debrid → Zurg → rclone → Ple
 curl -fsSL https://raw.githubusercontent.com/007games/debrid-plex-stack/main/install.sh | sudo bash
 ```
 
-It asks for two things: your [Real-Debrid API token](https://real-debrid.com/apitoken) and a [Plex claim code](https://plex.tv/claim). Then open `http://<server-ip>:32400/web`.
+It asks which service you use, its API key ([Real-Debrid](https://real-debrid.com/apitoken) or [TorBox](https://torbox.app/settings)), and a [Plex claim code](https://plex.tv/claim). Then open `http://<server-ip>:32400/web`.
 
-**Needs:** Linux or Synology DSM 7, Docker with Compose v2 (Synology: Container Manager), and Real-Debrid Premium.
+**Needs:** Linux or Synology DSM 7, Docker with Compose v2 (Synology: Container Manager), and a paid Real-Debrid or TorBox account.
 
 **On Synology**, also create the two tasks the installer prints (Control Panel → Task Scheduler). Regular Linux gets systemd units automatically.
 
@@ -20,19 +20,29 @@ It asks for two things: your [Real-Debrid API token](https://real-debrid.com/api
 
 ```mermaid
 flowchart LR
-  RD[(Real-Debrid)] --> Z[Zurg<br/>WebDAV]
-  Z -->|internal network,<br/>no internet| R[rclone<br/>FUSE, read-only]
-  R --> M[/mnt/zurg<br/>movies · shows · anime/]
+  RD[(Real-Debrid)] --> Z[Zurg] -->|internal network,<br/>no internet| R[rclone]
+  TB[(TorBox)] -.->|experimental| T[TorBox Media Center]
+  R --> M[/mnt<br/>movies · shows/]
+  T -.-> M
   M -->|read-only| P[Plex]
   P -->|:32400, LAN only| C[TV · phone · browser]
 ```
 
-- **Isolated:** rclone has no internet access and no ports. Zurg listens on `127.0.0.1` only. Plex can't reach either; it only reads the mount.
+| | Real-Debrid (default) | TorBox (experimental) |
+|---|---|---|
+| Mount | Zurg + rclone | [TorBox Media Center](https://github.com/TorBox-App/torbox-media-center) (official) |
+| Libraries | Movies, TV Shows, Anime | Movies, TV Shows |
+| New titles appear | within ~15 min | after the mount refresh (default 2 h) |
+| Isolation | mount container has no internet | mount container needs internet |
+
+- **Isolated:** Plex can't reach the provider containers; it only reads the mount. Zurg listens on `127.0.0.1` only.
 - **LAN-only:** Remote Access, Relay and UPnP are off, and a firewall rule limits port 32400 to your subnet. No `network_mode: host`.
 - **Self-healing:** a watchdog remounts and restarts the stack if the mount dies.
-- **Plex pre-configured:** libraries are created. Thumbnails and intro/credit detection are off, because they would read every file from Real-Debrid. Auto-empty-trash is off, so a dropped mount can't wipe your library. Hardware transcoding is used when `/dev/dri` exists (Plex Pass required).
+- **Plex pre-configured:** libraries are created. Thumbnails and intro/credit detection are off, because they would read every file from the cloud. Auto-empty-trash is off, so a dropped mount can't wipe your library. Hardware transcoding is used when `/dev/dri` exists (Plex Pass required).
 
-Add content with any Real-Debrid client, e.g. [Debrid Media Manager](https://debridmediamanager.com). It appears in Plex within 15 minutes.
+Add content with your provider's website, or for Real-Debrid with e.g. [Debrid Media Manager](https://debridmediamanager.com).
+
+**Switching provider later:** back up your library hashes (`python tools/rd.py backup` for Real-Debrid), run `uninstall.sh --purge`, re-run the installer and re-add the hashes at the new service.
 
 ## Commands
 
@@ -43,7 +53,7 @@ curl -fsSL .../install.sh | sudo bash        # re-run to update; keeps your sett
 python tools/rd.py status                    # Real-Debrid account helper (RD_TOKEN=...)
 ```
 
-Options: `DEBRID_DIR=/path`, `PLEX_LANGUAGE=nl-NL`, or `RD_TOKEN=... PLEX_CLAIM=...` for a non-interactive install. Run `install.sh --check` to see what would be detected.
+Options: `DEBRID_DIR=/path`, `PLEX_LANGUAGE=nl-NL`, `PROVIDER=torbox`, or `RD_TOKEN=...`/`TORBOX_API_KEY=...` plus `PLEX_CLAIM=...` for a non-interactive install. Run `install.sh --check` to see what would be detected.
 
 ## Notes
 

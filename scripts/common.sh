@@ -2,12 +2,22 @@
 # Shared settings and helpers. Sourced by the other scripts.
 
 STACK_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-MNT="$STACK_DIR/mnt/zurg"
 LOG="$STACK_DIR/logs/debrid.log"
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 DOCKER=$(command -v docker)
 
 envval() { sed -n "s/^$1=//p" "$STACK_DIR/.env" 2>/dev/null | tail -1; }
+
+# Provider-specific layout
+PROVIDER=$(envval PROVIDER); PROVIDER=${PROVIDER:-realdebrid}
+case "$PROVIDER" in
+  torbox)
+    MNT="$STACK_DIR/mnt/torbox"; MOUNTER=torbox; PROBE=movies
+    SERVICES="torbox plex"; LIBRARY_DIRS="movies series" ;;
+  *)
+    MNT="$STACK_DIR/mnt/zurg"; MOUNTER=rclone; PROBE=__all__
+    SERVICES="zurg rclone plex"; LIBRARY_DIRS="movies shows anime" ;;
+esac
 
 log() {
   mkdir -p "$(dirname "$LOG")"
@@ -26,11 +36,18 @@ container_running() {
 
 # Mounted AND answering (a stale FUSE mount errors or hangs on ls)
 mount_ok() {
-  grep -q " $MNT fuse.rclone " /proc/mounts && timeout 20 ls "$MNT/__all__" >/dev/null 2>&1
+  grep -q " $MNT fuse" /proc/mounts && timeout 20 ls "$MNT/$PROBE" >/dev/null 2>&1
 }
 
-# Zurg answers on loopback (401 without credentials still means it's alive)
+all_running() {
+  local c
+  for c in $SERVICES; do container_running "$c" || return 1; done
+}
+
+# Zurg answers on loopback (401 without credentials still means it's alive).
+# Always true for providers without zurg.
 zurg_ok() {
+  [ "$PROVIDER" = realdebrid ] || return 0
   local code
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9999/dav/)
   [ "$code" = "200" ] || [ "$code" = "207" ] || [ "$code" = "401" ]

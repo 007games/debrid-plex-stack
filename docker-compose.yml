@@ -1,24 +1,18 @@
-# Real-Debrid -> Zurg (WebDAV) -> rclone (FUSE) -> ./mnt/zurg -> Plex
+# Base: Plex + networks. The debrid provider comes from a second file, chosen via
+# COMPOSE_FILE in .env (written by install.sh):
 #
-#   internet <── debrid_egress ── zurg ── debrid_internal (internal: true) ── rclone
-#                                  │                                           │
-#                          127.0.0.1:9999 (host only)                  ./mnt/zurg (FUSE, read-only)
-#                                                                              │
-#   LAN ── ${LAN_IP}:32400 ── plex_lan ── plex <── ./mnt (ro, rslave) ─────────┘
+#   provider-realdebrid.yml   Real-Debrid -> Zurg -> rclone -> ./mnt/zurg
+#   provider-torbox.yml       TorBox -> TorBox Media Center -> ./mnt/torbox
+#   compose.gpu.yml           optional, adds /dev/dri for hardware transcoding
 #
-# - rclone has no internet access and no published ports.
-# - zurg is reachable only from rclone and from the host's loopback.
-# - plex has no network path to zurg/rclone; it only sees the read-only mount.
+#   LAN ── ${LAN_IP}:32400 ── plex_lan ── plex <── ./mnt (read-only, rslave) <── provider mount
 #
-# Settings come from .env (written by install.sh). Start with scripts/boot.sh.
-# GPU transcoding lives in compose.gpu.yml, enabled via COMPOSE_FILE in .env.
+# Plex has no network path to the provider containers; it only reads the mount.
+# Start with scripts/boot.sh.
 
 name: debrid
 
 networks:
-  debrid_internal:
-    driver: bridge
-    internal: true
   debrid_egress:
     driver: bridge
     driver_opts:
@@ -35,89 +29,6 @@ networks:
           gateway: ${PLEX_GATEWAY:-172.30.0.1}
 
 services:
-  zurg:
-    image: ${ZURG_IMAGE:-ghcr.io/debridmediamanager/zurg-testing:latest@sha256:9bde9836ea1e8495f0d7d892e3923ec72c6b6bb224d2e0755c9a84a09d21be17}
-    container_name: zurg
-    restart: unless-stopped
-    networks:
-      - debrid_internal
-      - debrid_egress
-    ports:
-      - "127.0.0.1:9999:9999"
-    volumes:
-      - ./zurg/config.yml:/app/config.yml:ro
-      - ./zurg/data:/app/data
-    environment:
-      - TZ=${TZ:-UTC}
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    mem_limit: 512m
-    logging:
-      driver: local
-      options:
-        max-size: 10m
-        max-file: "3"
-
-  rclone:
-    image: ${RCLONE_IMAGE:-rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5}
-    container_name: rclone
-    restart: unless-stopped
-    networks:
-      - debrid_internal
-    devices:
-      - /dev/fuse:/dev/fuse
-    cap_drop:
-      - ALL
-    cap_add:
-      - SYS_ADMIN
-    security_opt:
-      - apparmor:unconfined
-      - no-new-privileges:true
-    volumes:
-      - ./rclone/rclone.conf:/config/rclone/rclone.conf:ro
-      - ./rclone/cache:/cache
-      - type: bind
-        source: ./mnt
-        target: /data
-        bind:
-          propagation: rshared
-    command:
-      - mount
-      - "zurg:"
-      - /data/zurg
-      - --config=/config/rclone/rclone.conf
-      - --cache-dir=/cache
-      - --read-only
-      - --allow-other
-      - --uid=${PUID:-1000}
-      - --gid=${PGID:-1000}
-      - --umask=022
-      - --dir-cache-time=10s
-      - --vfs-cache-mode=full
-      - --vfs-cache-max-size=${RCLONE_CACHE_MAX:-20G}
-      - --vfs-cache-max-age=6h
-      - --vfs-read-chunk-size=32M
-      - --vfs-read-ahead=128M
-      - --buffer-size=64M
-      - --log-level=NOTICE
-    healthcheck:
-      test: ["CMD-SHELL", "grep -q ' /data/zurg fuse.rclone ' /proc/mounts && timeout 10 ls /data/zurg >/dev/null"]
-      interval: 30s
-      timeout: 15s
-      retries: 3
-      start_period: 30s
-    stop_grace_period: 30s
-    mem_limit: 1g
-    logging:
-      driver: local
-      options:
-        max-size: 10m
-        max-file: "3"
-    depends_on:
-      - zurg
-
   plex:
     image: ${PLEX_IMAGE:-lscr.io/linuxserver/plex:1.43.4.10903-e5521bd8c-ls327@sha256:06e07af2851e6a822e89062b148435495dd794d6d5aaf36247dee05fb3dcc4b8}
     container_name: plex
@@ -151,6 +62,3 @@ services:
       options:
         max-size: 10m
         max-file: "3"
-    depends_on:
-      rclone:
-        condition: service_healthy

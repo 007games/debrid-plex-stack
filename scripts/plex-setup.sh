@@ -76,7 +76,13 @@ add_library() {  # add_library NAME TYPE AGENT SCANNER PATH
 }
 
 echo "Creating libraries ($LANG_CODE)..."
-add_library Movies   movie tv.plex.agents.movie  "Plex Movie"     /mnt/zurg/movies
-add_library "TV Shows" show tv.plex.agents.series "Plex TV Series" /mnt/zurg/shows
-add_library Anime    show  tv.plex.agents.series "Plex TV Series" /mnt/zurg/anime
+lib=${MNT#"$STACK_DIR"}   # /mnt/zurg or /mnt/torbox, as seen inside Plex
+if [ "$PROVIDER" = torbox ]; then
+  add_library Movies     movie tv.plex.agents.movie  "Plex Movie"     "$lib/movies"
+  add_library "TV Shows" show  tv.plex.agents.series "Plex TV Series" "$lib/series"
+else
+  add_library Movies     movie tv.plex.agents.movie  "Plex Movie"     "$lib/movies"
+  add_library "TV Shows" show  tv.plex.agents.series "Plex TV Series" "$lib/shows"
+  add_library Anime      show  tv.plex.agents.series "Plex TV Series" "$lib/anime"
+fi
 echo "Plex is ready: http://$LAN_IP:32400/web"
