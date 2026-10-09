@@ -1,0 +1,12 @@
+# Secrets and runtime state (created by install.sh)
+.env
+zurg/config.yml
+zurg/data/
+rclone/rclone.conf
+rclone/cache/
+plex/
+mnt/
+logs/
+MAINTENANCE
+rd-backup-*.json
+__pycache__/

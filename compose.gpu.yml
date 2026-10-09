@@ -1,0 +1,6 @@
+# Intel/AMD hardware transcoding (Plex Pass required). Enabled by install.sh when
+# /dev/dri exists, via COMPOSE_FILE=docker-compose.yml:compose.gpu.yml in .env.
+services:
+  plex:
+    devices:
+      - /dev/dri:/dev/dri
