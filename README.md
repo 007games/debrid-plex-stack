@@ -51,7 +51,8 @@ The installer offers a small web page at `https://<server-ip>:8099` (LAN only, p
 - see your current key (masked; full key after re-entering the password) and change it (checked with the provider before it's saved),
 - switch provider,
 - restart the stack, pause the watchdog, and download library backups,
-- change the page's own password.
+- change the page's own password,
+- get a warning bar (and a daily log line) when premium has 7 days or less left; set `EXPIRY_WARN_DAYS` in `.env` to change that.
 
 The browser will warn once about the self-signed certificate; that's expected.
 

@@ -110,8 +110,8 @@ def pending() -> int:
 # ----------------------------------------------------------------------- html
 
 CSS = """
-:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#667085;--line:#e4e7ec;--ok:#12805c;--bad:#c4320a;--acc:#2f5bd3}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#171b23;--fg:#e6e9ef;--muted:#98a2b3;--line:#2a303c;--ok:#3ccf91;--bad:#ff7a59;--acc:#7aa2ff}}
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#667085;--line:#e4e7ec;--ok:#12805c;--bad:#c4320a;--acc:#2f5bd3;--warn:#b54708}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#171b23;--fg:#e6e9ef;--muted:#98a2b3;--line:#2a303c;--ok:#3ccf91;--bad:#ff7a59;--acc:#7aa2ff;--warn:#f79009}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
 main{max-width:860px;margin:0 auto;padding:16px}header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 h1{font-size:20px;margin:8px 0}h2{font-size:16px;margin:0 0 10px}nav a{margin-right:12px;color:var(--acc);text-decoration:none}
@@ -126,6 +126,8 @@ form.inline{display:inline-block;margin:4px 6px 4px 0}label{display:block;margin
 pre{white-space:pre-wrap;word-break:break-all;font-size:12.5px;max-height:480px;overflow:auto}
 table{width:100%;border-collapse:collapse;font-size:14px}td{padding:4px 6px;border-top:1px solid var(--line);vertical-align:top}
 .flash{border-left:4px solid var(--acc)}
+.banner{border-left:6px solid var(--warn);background:color-mix(in srgb,var(--warn) 12%,var(--card))}
+.banner.expired{--warn:var(--bad)}.banner a{margin-left:6px;color:var(--acc)}
 code{font:13px ui-monospace,monospace;background:var(--bg);padding:2px 6px;border-radius:6px}
 input[readonly]{font:13px ui-monospace,monospace}
 """
@@ -139,10 +141,38 @@ def page(title, body, session=None, flash=""):
                f'<form class="inline" method="post" action="/logout">{csrf_field(session)}'
                '<button class="secondary">Log out</button></form>')
     fl = f'<div class="card flash">{html.escape(flash)}</div>' if flash else ""
+    if session:
+        fl = expiry_banner() + fl
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{html.escape(title)} · debrid</title><style>{CSS}</style></head><body><main>'
             f'<header><h1>debrid-plex-stack</h1>{nav}</header>{fl}{body}</main></body></html>')
+
+
+RENEW_LINKS = {
+    "realdebrid": ("Real-Debrid", "https://real-debrid.com/premium"),
+    "torbox": ("TorBox", "https://torbox.app/pricing"),
+}
+
+
+def expiry_banner():
+    """Warning bar on every page when premium is about to run out (or has)."""
+    st = read_json("status.json")
+    acct = st.get("account") or {}
+    days = acct.get("days_left")
+    warn = st.get("expiry_warn_days", 7)
+    if not acct.get("ok") or not isinstance(days, int) or not isinstance(warn, int) or days > warn:
+        return ""
+    name, url = RENEW_LINKS.get(st.get("provider"), RENEW_LINKS["realdebrid"])
+    until = f' (until {html.escape(str(acct.get("expires", "")))})' if acct.get("expires") else ""
+    if days <= 0:
+        msg, cls = f"Your {name} premium has expired: nothing will play until you renew.", "expired"
+    elif days == 1:
+        msg, cls = f"Your {name} premium expires tomorrow{until}.", "expired"
+    else:
+        msg, cls = f"Your {name} premium expires in {days} days{until}.", "expired" if days <= 2 else "soon"
+    return (f'<div class="card banner {cls}"><b>{msg}</b> '
+            f'<a href="{url}" target="_blank" rel="noopener noreferrer">Renew at {html.escape(name)} ↗</a></div>')
 
 
 def csrf_field(session):

@@ -94,7 +94,15 @@ account_json() {  # cached for 15 minutes; one API call
     key=$(envval TORBOX_API_KEY)
     resp=$(curl -fsS --max-time 10 -H "Authorization: Bearer $key" https://api.torbox.app/v1/api/user/me 2>/dev/null | tr -d '\n')
     exp=$(echo "$resp" | sed -n 's/.*"premium_expires_at"[[:space:]]*:[[:space:]]*"\([0-9-]*\).*/\1/p')
-    echo "$resp" | grep -q '"success"[[:space:]]*:[[:space:]]*true' && printf '{"ok": true, "expires": "%s"}' "$(js "$exp")" >"$cache"
+    if echo "$resp" | grep -q '"success"[[:space:]]*:[[:space:]]*true'; then
+      local end
+      end=$(date -d "$exp" +%s 2>/dev/null)
+      if [ -n "$end" ]; then
+        printf '{"ok": true, "days_left": %d, "expires": "%s"}' "$(( (end - $(date +%s)) / 86400 ))" "$(js "$exp")" >"$cache"
+      else
+        printf '{"ok": true, "expires": "%s"}' "$(js "$exp")" >"$cache"
+      fi
+    fi
   fi
   [ -f "$cache" ] && cat "$cache" || printf '{"ok": false}'
 }
@@ -109,6 +117,21 @@ key_hint() {
 
 # Only plain characters go into status.json
 js() { printf '%s' "$1" | tr -dc 'A-Za-z0-9 ._:()/-'; }
+
+# Premium expiry: shown on the page, and logged once a day when it gets close
+WARN_DAYS=$(envval EXPIRY_WARN_DAYS); [[ "$WARN_DAYS" =~ ^[0-9]{1,3}$ ]] || WARN_DAYS=7
+ACCOUNT=$(account_json)
+days_left=$(printf '%s' "$ACCOUNT" | sed -n 's/.*"days_left": *\(-\{0,1\}[0-9]*\).*/\1/p')
+if [ -n "$days_left" ] && [ "$days_left" -le "$WARN_DAYS" ]; then
+  marker="$STATE/.expiry-logged-$(date +%F)"
+  if [ ! -f "$marker" ]; then
+    rm -f "$STATE"/.expiry-logged-*
+    touch "$marker"
+    name=$([ "$PROVIDER" = torbox ] && echo TorBox || echo Real-Debrid)
+    if [ "$days_left" -le 0 ]; then log "warning: $name premium has EXPIRED; streaming stops until you renew"
+    else log "warning: $name premium expires in $days_left day(s)"; fi
+  fi
+fi
 
 {
   printf '{\n  "updated": "%s",\n  "provider": "%s",\n' "$(date '+%F %T')" "$(js "$PROVIDER")"
@@ -130,7 +153,8 @@ js() { printf '%s' "$1" | tr -dc 'A-Za-z0-9 ._:()/-'; }
   printf '  "key_hint": "%s",\n' "$(key_hint)"
   printf '  "rd_key_set": %s,\n' "$(grep -q '^token: [A-Za-z0-9]' "$STACK_DIR/zurg/config.yml" 2>/dev/null && echo true || echo false)"
   printf '  "torbox_key_set": %s,\n' "$([ -n "$(envval TORBOX_API_KEY)" ] && echo true || echo false)"
-  printf '  "account": %s\n}\n' "$(account_json)"
+  printf '  "expiry_warn_days": %d,\n' "$WARN_DAYS"
+  printf '  "account": %s\n}\n' "$ACCOUNT"
 } >"$STATE/status.tmp" && mv -f "$STATE/status.tmp" "$STATE/status.json"
 chmod 644 "$STATE/status.json"
 

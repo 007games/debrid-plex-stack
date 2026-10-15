@@ -7,6 +7,16 @@ bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
 info() { printf '        %s\n' "$*"; }
 
 echo "Provider: $PROVIDER"
+st="$STACK_DIR/admin/state/status.json"
+if [ -f "$st" ]; then
+  days=$(sed -n 's/.*"days_left": *\(-\{0,1\}[0-9]*\).*/\1/p' "$st")
+  warn=$(sed -n 's/.*"expiry_warn_days": *\([0-9]*\).*/\1/p' "$st"); warn=${warn:-7}
+  if [ -n "$days" ]; then
+    if [ "$days" -le 0 ]; then bad "premium EXPIRED: renew to keep streaming"
+    elif [ "$days" -le "$warn" ]; then bad "premium expires in $days day(s): renew soon"
+    else ok "premium: $days days left"; fi
+  fi
+fi
 echo "Containers"
 for c in $SERVICES; do
   st=$("$DOCKER" inspect -f '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}' "$c" 2>/dev/null)
