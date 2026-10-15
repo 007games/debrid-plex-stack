@@ -126,6 +126,8 @@ form.inline{display:inline-block;margin:4px 6px 4px 0}label{display:block;margin
 pre{white-space:pre-wrap;word-break:break-all;font-size:12.5px;max-height:480px;overflow:auto}
 table{width:100%;border-collapse:collapse;font-size:14px}td{padding:4px 6px;border-top:1px solid var(--line);vertical-align:top}
 .flash{border-left:4px solid var(--acc)}
+code{font:13px ui-monospace,monospace;background:var(--bg);padding:2px 6px;border-radius:6px}
+input[readonly]{font:13px ui-monospace,monospace}
 """
 
 
@@ -193,11 +195,48 @@ def status_body(session):
 {button(session, "restart", "Restart stack")}
 {button(session, "maintenance_off" if maint else "maintenance_on", "Resume watchdog" if maint else "Pause watchdog (maintenance)", secondary=True)}
 {button(session, "plex_setup", "Re-apply Plex settings", secondary=True)}
+<p>{ext_link(*PROVIDER_LINKS.get(s.get("provider", "realdebrid"), PROVIDER_LINKS["realdebrid"]))} · add movies and shows to your library</p>
 <p class="muted">Actions are applied by the host within a minute. Pending: {pending()}.</p></div>
 <div class="card"><h2>Recent actions</h2>{results_table()}</div>"""
 
 
-def keys_body(session):
+SECRET = DATA / "secret"
+PROVIDER_LINKS = {
+    "realdebrid": ("Debrid Media Manager", "https://debridmediamanager.com"),
+    "torbox": ("TorBox dashboard", "https://torbox.app/dashboard"),
+}
+
+
+def read_secret(name):
+    try:
+        v = (SECRET / name).read_text().strip()
+        return v if KEY_RE.match(v) else ""
+    except OSError:
+        return ""
+
+
+def ext_link(label, url, cls=""):
+    c = f' class="{cls}"' if cls else ""
+    return f'<a{c} href="{url}" target="_blank" rel="noopener noreferrer">{html.escape(label)} ↗</a>'
+
+
+def key_block(session, which, revealed=""):
+    """Current key: masked, or in full after the password was re-entered."""
+    key = read_secret(f"{which}.key")
+    if not key:
+        return '<p class="muted">No key saved.</p>'
+    if revealed == which:
+        return (f'<label for="cur-{which}">Current key</label>'
+                f'<input id="cur-{which}" value="{html.escape(key)}" readonly spellcheck="false" autocomplete="off">'
+                '<p class="muted">Shown because you re-entered your password. It is hidden again when you leave this page.</p>')
+    return (f'<p>Current key: <code>••••••••••••{html.escape(key[-4:])}</code></p>'
+            f'<form method="post" action="/reveal" class="row">{csrf_field(session)}<input type="hidden" name="which" value="{which}">'
+            f'<div><label for="pw-{which}">Password to show the full key</label>'
+            f'<input id="pw-{which}" name="password" type="password" autocomplete="current-password" required></div>'
+            '<button class="secondary">Show</button></form>')
+
+
+def keys_body(session, revealed="", error=""):
     s = read_json("status.json")
     cur = s.get("provider", "realdebrid")
     other = "torbox" if cur == "realdebrid" else "realdebrid"
@@ -205,15 +244,19 @@ def keys_body(session):
     other_set = s.get("torbox_key_set") if other == "torbox" else s.get("rd_key_set")
     switch = (button(session, "switch_provider", f"Switch to {names[other]}", other, secondary=True)
               if other_set else f'<p class="muted">Save a {names[other]} key first to enable switching.</p>')
-    return f"""
-<div class="card"><h2>Real-Debrid API key</h2>
-<p class="muted">From <a href="https://real-debrid.com/apitoken" rel="noreferrer">real-debrid.com/apitoken</a>. Checked with Real-Debrid before it's saved; saved keys are never shown here.</p>
+    err = f'<div class="card"><p class="bad">{html.escape(error)}</p></div>' if error else ""
+    return f"""{err}
+<div class="card"><h2>Real-Debrid</h2>
+{key_block(session, "rd", revealed)}
 <form method="post" action="/action" class="row">{csrf_field(session)}<input type="hidden" name="action" value="set_rd_token">
-<div><label for="rd">New key</label><input id="rd" name="value" type="password" autocomplete="off" required></div><button>Save</button></form></div>
-<div class="card"><h2>TorBox API key</h2>
-<p class="muted">From <a href="https://torbox.app/settings" rel="noreferrer">torbox.app/settings</a>.</p>
+<div><label for="rd">New key</label><input id="rd" name="value" type="password" autocomplete="off" required></div><button>Save</button></form>
+<p class="muted">Get a key at {ext_link("real-debrid.com/apitoken", "https://real-debrid.com/apitoken")}; it's checked with Real-Debrid before it's saved.
+Add content with {ext_link(*PROVIDER_LINKS["realdebrid"])}.</p></div>
+<div class="card"><h2>TorBox</h2>
+{key_block(session, "torbox", revealed)}
 <form method="post" action="/action" class="row">{csrf_field(session)}<input type="hidden" name="action" value="set_torbox_key">
-<div><label for="tb">New key</label><input id="tb" name="value" type="password" autocomplete="off" required></div><button>Save</button></form></div>
+<div><label for="tb">New key</label><input id="tb" name="value" type="password" autocomplete="off" required></div><button>Save</button></form>
+<p class="muted">Get a key at {ext_link("torbox.app/settings", "https://torbox.app/settings")}.</p></div>
 <div class="card"><h2>Provider</h2><p>Currently using <b>{html.escape(names.get(cur, cur))}</b>.</p>
 <p class="muted">Switching stops the stack for a minute. Back up your library first; the new provider has its own library.</p>{switch}</div>
 <div class="card"><h2>Recent actions</h2>{results_table()}</div>"""
@@ -342,6 +385,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.action(f)
         if path == "/password":
             return self.change_password(token, s, f)
+        if path == "/reveal":
+            return self.reveal(s, f)
         return self.send(404, page("Not found", "<p>Not found.</p>", s))
 
     def login(self, f):
@@ -355,6 +400,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/", {"Set-Cookie": self.cookie(token, SESSION_IDLE)})
         record_fail()
         return self.send(401, login_page("Wrong password."))
+
+    def reveal(self, s, f):
+        which = f.get("which", "")
+        if which not in ("rd", "torbox"):
+            return self.redirect("/keys")
+        if locked_out():
+            return self.send(429, page("Keys", keys_body(s, error="Too many failed attempts. Try again in 15 minutes."), s))
+        if not check_password(f.get("password", "")):
+            record_fail()
+            return self.send(401, page("Keys", keys_body(s, error="Wrong password."), s))
+        return self.send(200, page("Keys", keys_body(s, revealed=which), s))
 
     def change_password(self, token, s, f):
         def again(msg, code=400):

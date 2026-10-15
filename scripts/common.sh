@@ -110,7 +110,9 @@ dockerd_rss_mb() {
 admin_perms() {
   local a="$STACK_DIR/admin"
   [ -d "$a/auth" ] || return 0
+  mkdir -p "$a/secret"
   chown root:root "$a" "$a/app.py"; chmod 755 "$a"; chmod 644 "$a/app.py"
-  chown -R 65534:65534 "$a/requests" "$a/auth"; chmod 700 "$a/requests" "$a/auth"; chmod 600 "$a/auth"/*
+  chown -R 65534:65534 "$a/requests" "$a/auth" "$a/secret"; chmod 700 "$a/requests" "$a/auth" "$a/secret"
+  chmod 600 "$a/auth"/* "$a/secret"/* 2>/dev/null
   chown -R root:root "$a/state"; chmod 755 "$a/state" "$a/state/backups"
 }

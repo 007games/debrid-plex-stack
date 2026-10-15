@@ -1,8 +1,9 @@
 # Optional management page (LAN only): https://${LAN_IP}:${ADMIN_PORT}
 # Enabled by install.sh via COMPOSE_FILE. The container has no Docker socket and
-# no access to the stack's secrets: it only reads admin/state (published by
-# scripts/agent.sh) and queues requests in admin/requests, which the agent
-# validates and applies on the host.
+# can't change the stack: it reads admin/state (published by scripts/agent.sh) and
+# queues requests in admin/requests, which the agent validates and applies on the
+# host. It can read the current provider keys (admin/secret) to show them after
+# password re-entry.
 
 networks:
   admin_lan:
@@ -33,6 +34,7 @@ services:
       - ./admin/requests:/data/requests
       - ./admin/state:/data/state:ro
       - ./admin/auth:/data/auth          # writable so the page can change its own password
+      - ./admin/secret:/data/secret:ro   # current keys, shown only after password re-entry
     tmpfs:
       - /tmp:size=16m
     command: ["python", "/app/app.py", "serve"]

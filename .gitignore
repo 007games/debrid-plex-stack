@@ -13,3 +13,4 @@ __pycache__/
 admin/requests/
 admin/state/
 admin/auth/
+admin/secret/

@@ -136,3 +136,16 @@ chmod 644 "$STATE/status.json"
 
 tail -n 100 "$LOG" 2>/dev/null >"$STATE/log.txt"
 chmod 644 "$STATE/log.txt"
+
+# Current keys for the page's "Show key" (behind password re-entry). Only the page's
+# user (65534) can read admin/secret; nothing secret goes into admin/state.
+publish_secret() {  # publish_secret NAME VALUE
+  local f="$ADMIN/secret/$1"
+  if [ -z "$2" ]; then rm -f "$f"; return; fi
+  [ -f "$f" ] && [ "$(cat "$f")" = "$2" ] && return
+  printf '%s' "$2" >"$f.tmp" && chown 65534:65534 "$f.tmp" && chmod 600 "$f.tmp" && mv -f "$f.tmp" "$f"
+}
+if [ -d "$ADMIN/secret" ]; then
+  publish_secret rd.key "$(sed -n 's/^token: //p' "$STACK_DIR/zurg/config.yml" 2>/dev/null | tr -dc 'A-Za-z0-9_-')"
+  publish_secret torbox.key "$(envval TORBOX_API_KEY | tr -dc 'A-Za-z0-9_-')"
+fi
