@@ -18,6 +18,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import ssl
 import sys
 import threading
@@ -362,15 +363,43 @@ class Server(ThreadingHTTPServer):
         return self.ssl_ctx is not None
 
     def finish_request(self, request, client_address):
-        # TLS handshake per connection in the worker thread, so a slow or plain-HTTP
-        # client can't block the accept loop
+        # TLS handshake per connection in the worker thread, so a slow client can't
+        # block the accept loop
         request.settimeout(30)
         if self.ssl_ctx:
+            try:
+                first = request.recv(1, socket.MSG_PEEK)
+            except OSError:
+                return
+            if first and first != b"\x16":      # not a TLS handshake: plain http:// typed
+                return redirect_to_https(request)
             try:
                 request = self.ssl_ctx.wrap_socket(request, server_side=True)
             except (ssl.SSLError, OSError):
                 return
         super().finish_request(request, client_address)
+
+
+def redirect_to_https(sock):
+    """Answer a plain-HTTP request on the HTTPS port with a redirect instead of an empty reply."""
+    try:
+        head = sock.recv(4096).decode("latin-1", "replace")
+        m = re.search(r"^Host:\s*([A-Za-z0-9.\-]+(?::\d{1,5})?)\s*$", head, re.I | re.M)
+        target = f"https://{m.group(1)}/" if m else None
+        if target:
+            body = f'<a href="{target}">{target}</a>'
+            sock.sendall((f"HTTP/1.1 301 Moved Permanently\r\nLocation: {target}\r\nContent-Type: text/html\r\n"
+                          f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n{body}").encode())
+        else:
+            msg = b"Use https:// to open this page.\r\n"
+            sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % (len(msg), msg))
+    except OSError:
+        pass
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
 
 
 def serve():
