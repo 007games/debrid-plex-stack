@@ -59,6 +59,26 @@ def check_password(password: str) -> bool:
         return False
 
 
+def save_password(password: str) -> None:
+    tmp = AUTH / ".password.hash.tmp"
+    tmp.write_text(hash_password(password) + "\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, AUTH / "password.hash")       # atomic: a crash never leaves a half-written hash
+
+
+def locked_out() -> bool:
+    now = time.time()
+    with lock:
+        fails[:] = [t for t in fails if now - t < LOCK_SECS]
+        return len(fails) >= MAX_FAILS
+
+
+def record_fail() -> None:
+    with lock:
+        fails.append(time.time())
+    time.sleep(1)
+
+
 # ---------------------------------------------------------------------- state
 
 def read_json(name):
@@ -113,7 +133,7 @@ def page(title, body, session=None, flash=""):
     nav = ""
     if session:
         nav = ('<nav><a href="/">Status</a><a href="/keys">Keys &amp; provider</a><a href="/backups">Backups</a>'
-               '<a href="/log">Log</a></nav>'
+               '<a href="/log">Log</a><a href="/password">Password</a></nav>'
                f'<form class="inline" method="post" action="/logout">{csrf_field(session)}'
                '<button class="secondary">Log out</button></form>')
     fl = f'<div class="card flash">{html.escape(flash)}</div>' if flash else ""
@@ -208,6 +228,17 @@ def backups_body(session):
 {"<table>" + rows + "</table>" if rows else '<p class="muted">No backups yet.</p>'}</div>"""
 
 
+def password_body(session, error=""):
+    err = f'<p class="bad">{html.escape(error)}</p>' if error else ""
+    return f"""<div class="card" style="max-width:460px"><h2>Change password</h2>{err}
+<form method="post" action="/password">{csrf_field(session)}
+<label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required>
+<label for="new">New password (at least 8 characters)</label><input id="new" name="new" type="password" autocomplete="new-password" minlength="8" required>
+<label for="rep">Repeat new password</label><input id="rep" name="repeat" type="password" autocomplete="new-password" minlength="8" required>
+<p><button>Change password</button></p></form>
+<p class="muted">Other open sessions are logged out. Forgot it? Reset over SSH: <code>sudo bash scripts/admin-setup.sh</code></p></div>"""
+
+
 def log_body(_session):
     return f'<div class="card"><h2>Stack log</h2><pre>{html.escape(read_text("log.txt", "No log yet."))}</pre></div>'
 
@@ -287,6 +318,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, f.read_bytes(), "application/json",
                                  {"Content-Disposition": f'attachment; filename="{name}"'})
             return self.send(404, page("Not found", "<p>Not found.</p>", s))
+        if path == "/password":
+            return self.send(200, page("Password", password_body(s), s, flash))
         if path == "/log":
             return self.send(200, page("Log", log_body(s), s))
         return self.send(404, page("Not found", "<p>Not found.</p>", s))
@@ -307,25 +340,49 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect("/login", {"Set-Cookie": self.cookie("", 0)})
         if path == "/action":
             return self.action(f)
+        if path == "/password":
+            return self.change_password(token, s, f)
         return self.send(404, page("Not found", "<p>Not found.</p>", s))
 
     def login(self, f):
-        now = time.time()
-        with lock:
-            fails[:] = [t for t in fails if now - t < LOCK_SECS]
-            locked = len(fails) >= MAX_FAILS
-        if locked:
+        if locked_out():
             return self.send(429, login_page("Too many failed attempts. Try again in 15 minutes."))
         if check_password(f.get("password", "")):
             token = secrets.token_urlsafe(32)
             with lock:
                 fails.clear()
-                sessions[token] = {"csrf": secrets.token_urlsafe(32), "seen": now}
+                sessions[token] = {"csrf": secrets.token_urlsafe(32), "seen": time.time()}
             return self.redirect("/", {"Set-Cookie": self.cookie(token, SESSION_IDLE)})
-        with lock:
-            fails.append(now)
-        time.sleep(1)
+        record_fail()
         return self.send(401, login_page("Wrong password."))
+
+    def change_password(self, token, s, f):
+        def again(msg, code=400):
+            return self.send(code, page("Password", password_body(s, msg), s))
+        if locked_out():
+            return again("Too many failed attempts. Try again in 15 minutes.", 429)
+        new, repeat = f.get("new", ""), f.get("repeat", "")
+        if not check_password(f.get("current", "")):
+            record_fail()       # counts towards the lockout, like a failed login
+            return again("Current password is wrong.", 401)
+        if len(new) < 8 or len(new) > 200:
+            return again("The new password must be 8 to 200 characters.")
+        if new != repeat:
+            return again("The new passwords don't match.")
+        if new == f.get("current"):
+            return again("The new password is the same as the current one.")
+        try:
+            save_password(new)
+        except OSError:
+            return again("Could not save the password (is admin/auth writable for the page?).", 500)
+        # Log out every other session; keep this one, with a fresh token
+        new_token = secrets.token_urlsafe(32)
+        with lock:
+            sessions.clear()
+            fails.clear()
+            sessions[new_token] = {"csrf": secrets.token_urlsafe(32), "seen": time.time()}
+        return self.redirect("/password?m=" + urllib.parse.quote("Password changed. Other sessions were logged out."),
+                             {"Set-Cookie": self.cookie(new_token, SESSION_IDLE)})
 
     def action(self, f):
         action, value = f.get("action", ""), f.get("value", "").strip()

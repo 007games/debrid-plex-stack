@@ -50,11 +50,12 @@ The installer offers a small web page at `https://<server-ip>:8099` (LAN only, p
 - check status,
 - change your Real-Debrid or TorBox key (checked with the provider before it's saved),
 - switch provider,
-- restart the stack, pause the watchdog, and download library backups.
+- restart the stack, pause the watchdog, and download library backups,
+- change the page's own password.
 
 The browser will warn once about the self-signed certificate; that's expected.
 
-The page has no Docker access and never sees saved keys. It only queues requests, which a root script on the host (`scripts/agent.sh`) validates against a whitelist and applies within a minute (instantly on systemd). Set it up later, or reset the password, with `sudo bash scripts/admin-setup.sh`.
+The page has no Docker access and never sees saved keys. It only queues requests, which a root script on the host (`scripts/agent.sh`) validates against a whitelist and applies within a minute (instantly on systemd). Set it up later, or reset a forgotten password, with `sudo bash scripts/admin-setup.sh`.
 
 ## Commands
 

@@ -32,7 +32,7 @@ services:
       - ./admin/app.py:/app/app.py:ro
       - ./admin/requests:/data/requests
       - ./admin/state:/data/state:ro
-      - ./admin/auth:/data/auth:ro
+      - ./admin/auth:/data/auth          # writable so the page can change its own password
     tmpfs:
       - /tmp:size=16m
     command: ["python", "/app/app.py", "serve"]
