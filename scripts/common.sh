@@ -72,18 +72,27 @@ mnt_is_shared() {
   awk -v m="$STACK_DIR/mnt" '$5 == m && / shared:/ {f=1} END {exit !f}' /proc/self/mountinfo
 }
 
-# Docker-published ports bypass host firewalls, so filter 32400 in DOCKER-USER:
-# drop anything to Plex arriving on the LAN interface from outside the LAN subnet.
-firewall_rule() {
-  echo "-i $(envval LAN_IFACE) -p tcp --dport 32400 ! -s $(envval LAN_SUBNET) -j DROP"
+# Docker-published ports bypass host firewalls, so filter them in DOCKER-USER:
+# drop anything arriving on the LAN interface from outside the LAN subnet.
+firewall_rule() {  # firewall_rule PORT
+  echo "-i $(envval LAN_IFACE) -p tcp --dport ${1:-32400} ! -s $(envval LAN_SUBNET) -j DROP"
+}
+
+# Plex, plus the management page when it's installed
+firewall_ports() {
+  echo 32400
+  [ -n "$(envval ADMIN_PORT)" ] && envval ADMIN_PORT
 }
 
 ensure_firewall() {
   iptables -L DOCKER-USER -n >/dev/null 2>&1 || { log "firewall: DOCKER-USER chain not present yet"; return 1; }
-  # shellcheck disable=SC2046
-  if ! iptables -C DOCKER-USER $(firewall_rule) 2>/dev/null; then
-    iptables -I DOCKER-USER 1 $(firewall_rule) && log "firewall: added DOCKER-USER rule ($(firewall_rule))"
-  fi
+  local port
+  for port in $(firewall_ports); do
+    # shellcheck disable=SC2046
+    if ! iptables -C DOCKER-USER $(firewall_rule "$port") 2>/dev/null; then
+      iptables -I DOCKER-USER 1 $(firewall_rule "$port") && log "firewall: added DOCKER-USER rule ($(firewall_rule "$port"))"
+    fi
+  done
 }
 
 # Resident memory of dockerd in MB
@@ -94,4 +103,14 @@ dockerd_rss_mb() {
       */dockerd*) awk '/^VmRSS/ {print int($2/1024)}' "$p/status"; return ;;
     esac
   done
+}
+
+# Management page ownership: the page runs as 65534 (nobody) and may only write
+# admin/requests and read admin/auth; admin/state is written by the root agent.
+admin_perms() {
+  local a="$STACK_DIR/admin"
+  [ -d "$a/auth" ] || return 0
+  chown root:root "$a" "$a/app.py"; chmod 755 "$a"; chmod 644 "$a/app.py"
+  chown -R 65534:65534 "$a/requests" "$a/auth"; chmod 700 "$a/requests" "$a/auth"; chmod 600 "$a/auth"/*
+  chown -R root:root "$a/state"; chmod 755 "$a/state" "$a/state/backups"
 }

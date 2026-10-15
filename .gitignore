@@ -10,3 +10,6 @@ logs/
 MAINTENANCE
 rd-backup-*.json
 __pycache__/
+admin/requests/
+admin/state/
+admin/auth/

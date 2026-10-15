@@ -8,6 +8,7 @@
 #   RD_TOKEN / TORBOX_API_KEY, PLEX_CLAIM   skip the prompts (non-interactive install)
 #   DEBRID_DIR             install location (default: /volume1/@debrid on Synology, else /opt/debrid)
 #   PLEX_LANGUAGE          library metadata language (default: en-US)
+#   ADMIN=yes|no, ADMIN_PASSWORD   management page (asked when not set)
 #   DEBRID_SRC             use a local checkout instead of downloading from GitHub
 # Run with --check to only print what would be detected.
 
@@ -200,6 +201,12 @@ secure() {
   chown -R "$PUID:$PGID" plex
   chmod 750 plex plex/config
   chmod 755 mnt mnt/zurg mnt/torbox
+  admin_perms_after_secure
+}
+
+admin_perms_after_secure() {
+  [ -f scripts/common.sh ] || return 0
+  bash -c '. scripts/common.sh; admin_perms'
 }
 
 start() {
@@ -219,6 +226,18 @@ start() {
   bash scripts/boot.sh
   tail -n 3 logs/debrid.log | sed 's/^/  /'
   bash scripts/plex-setup.sh || warn "Plex setup incomplete (see message above)"
+
+  if [ -f admin/auth/password.hash ]; then
+    info "management page already set up"
+  else
+    local want=${ADMIN:-}
+    if [ -z "$want" ]; then
+      ask want "Install the management page (change keys, status, backups; LAN only)? [Y/n]: "
+    fi
+    case "$want" in n|N|no|No) info "skipping the management page (enable later: scripts/admin-setup.sh)" ;;
+      *) bold "Management page"; bash scripts/admin-setup.sh || warn "management page setup failed" ;;
+    esac
+  fi
 }
 
 persist() {
@@ -226,7 +245,7 @@ persist() {
   if [ "$SYNOLOGY" = yes ]; then
     info "Synology: create two tasks in Control Panel > Task Scheduler > Create (user: root):"
     info "  1. Triggered Task, event Boot-up:          bash $DEBRID_DIR/scripts/boot.sh"
-    info "  2. Scheduled Task, daily, every 5 minutes: bash $DEBRID_DIR/scripts/watchdog.sh"
+    info "  2. Scheduled Task, daily, every 1 minute:  bash $DEBRID_DIR/scripts/watchdog.sh"
   elif command -v systemctl >/dev/null && [ -d /etc/systemd/system ]; then
     cat >/etc/systemd/system/debrid-boot.service <<EOF
 [Unit]
@@ -252,19 +271,39 @@ ExecStart=/bin/bash $DEBRID_DIR/scripts/watchdog.sh
 EOF
     cat >/etc/systemd/system/debrid-watchdog.timer <<EOF
 [Unit]
-Description=Run the debrid-plex-stack watchdog every 5 minutes
+Description=Run the debrid-plex-stack watchdog every minute
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=5min
+OnBootSec=2min
+OnUnitActiveSec=1min
 
 [Install]
 WantedBy=timers.target
 EOF
+    # Apply management-page requests immediately instead of waiting for the next minute
+    cat >/etc/systemd/system/debrid-agent.service <<EOF
+[Unit]
+Description=debrid-plex-stack management agent
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $DEBRID_DIR/scripts/agent.sh
+EOF
+    cat >/etc/systemd/system/debrid-agent.path <<EOF
+[Unit]
+Description=Watch for debrid-plex-stack management requests
+
+[Path]
+PathChanged=$DEBRID_DIR/admin/requests
+
+[Install]
+WantedBy=multi-user.target
+EOF
     systemctl daemon-reload
     systemctl enable debrid-boot.service >/dev/null 2>&1
     systemctl enable --now debrid-watchdog.timer >/dev/null 2>&1
-    info "systemd: debrid-boot.service and debrid-watchdog.timer enabled"
+    [ -d "$DEBRID_DIR/admin/requests" ] && systemctl enable --now debrid-agent.path >/dev/null 2>&1
+    info "systemd: debrid-boot.service, debrid-watchdog.timer and debrid-agent.path enabled"
   else
     warn "no systemd: run scripts/boot.sh at boot and scripts/watchdog.sh every 5 minutes yourself"
   fi
@@ -278,6 +317,9 @@ summary() {
     info "Add titles in your TorBox dashboard; they appear after the next mount refresh (~2 h) and Plex scan."
   else
     info "Add titles to Real-Debrid (e.g. https://debridmediamanager.com); they appear within ~15 min."
+  fi
+  if grep -q '^ADMIN_PORT=' "$DEBRID_DIR/.env"; then
+    info "Manage:  https://$LAN_IP:$(sed -n 's/^ADMIN_PORT=//p' "$DEBRID_DIR/.env")   (self-signed certificate: accept the browser warning once)"
   fi
   info "Health:  sudo bash $DEBRID_DIR/scripts/status.sh"
   info "Remove:  sudo bash $DEBRID_DIR/uninstall.sh"

@@ -9,12 +9,15 @@ touch "$STACK_DIR/MAINTENANCE"
 compose down --remove-orphans
 unmount_stale
 umount "$STACK_DIR/mnt" 2>/dev/null
-# shellcheck disable=SC2046
-iptables -D DOCKER-USER $(firewall_rule) 2>/dev/null
+for port in $(firewall_ports); do
+  # shellcheck disable=SC2046
+  iptables -D DOCKER-USER $(firewall_rule "$port") 2>/dev/null
+done
 
 if command -v systemctl >/dev/null; then
-  systemctl disable --now debrid-watchdog.timer debrid-boot.service 2>/dev/null
-  rm -f /etc/systemd/system/debrid-{boot,watchdog}.service /etc/systemd/system/debrid-watchdog.timer
+  systemctl disable --now debrid-watchdog.timer debrid-boot.service debrid-agent.path 2>/dev/null
+  rm -f /etc/systemd/system/debrid-{boot,watchdog,agent}.service /etc/systemd/system/debrid-watchdog.timer \
+        /etc/systemd/system/debrid-agent.path
   systemctl daemon-reload
 fi
 [ -d /usr/syno ] && echo "Synology: also delete the two debrid tasks in Control Panel > Task Scheduler."

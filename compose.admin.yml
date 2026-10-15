@@ -1,0 +1,50 @@
+# Optional management page (LAN only): https://${LAN_IP}:${ADMIN_PORT}
+# Enabled by install.sh via COMPOSE_FILE. The container has no Docker socket and
+# no access to the stack's secrets: it only reads admin/state (published by
+# scripts/agent.sh) and queues requests in admin/requests, which the agent
+# validates and applies on the host.
+
+networks:
+  admin_lan:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+
+services:
+  admin:
+    image: ${ADMIN_IMAGE:-python:3.12.15-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4}
+    container_name: debrid-admin
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - admin_lan
+    ports:
+      - "${LAN_IP:?set LAN_IP in .env}:${ADMIN_PORT:-8099}:8099/tcp"
+    environment:
+      - ADMIN_PORT=8099
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./admin/app.py:/app/app.py:ro
+      - ./admin/requests:/data/requests
+      - ./admin/state:/data/state:ro
+      - ./admin/auth:/data/auth:ro
+    tmpfs:
+      - /tmp:size=16m
+    command: ["python", "/app/app.py", "serve"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8099), 3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 128m
+    pids_limit: 64
+    logging:
+      driver: local
+      options:
+        max-size: 5m
+        max-file: "2"

@@ -44,8 +44,18 @@ echo "Isolation"
 if [ "$PROVIDER" = realdebrid ]; then
   "$DOCKER" exec rclone wget -q -T 5 -O /dev/null http://1.1.1.1 2>/dev/null && bad "rclone can reach the internet" || ok "rclone has no internet access"
 fi
-# shellcheck disable=SC2046
-iptables -C DOCKER-USER $(firewall_rule) 2>/dev/null && ok "port 32400 limited to $(envval LAN_SUBNET)" || bad "DOCKER-USER rule missing"
+for port in $(firewall_ports); do
+  # shellcheck disable=SC2046
+  iptables -C DOCKER-USER $(firewall_rule "$port") 2>/dev/null && ok "port $port limited to $(envval LAN_SUBNET)" || bad "DOCKER-USER rule for port $port missing"
+done
+
+if [ -n "$(envval ADMIN_PORT)" ]; then
+  echo "Management page"
+  container_running debrid-admin && ok "debrid-admin running" || bad "debrid-admin not running"
+  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "https://$lan_ip:$(envval ADMIN_PORT)/healthz")
+  [ "$code" = "200" ] && ok "https://$lan_ip:$(envval ADMIN_PORT) answers" || bad "https://$lan_ip:$(envval ADMIN_PORT) -> HTTP $code"
+  [ -f "$STACK_DIR/admin/state/status.json" ] && info "status published: $(stat -c %y "$STACK_DIR/admin/state/status.json" | cut -d. -f1)"
+fi
 
 echo "Resources"
 info "dockerd RAM:  $(dockerd_rss_mb) MB"

@@ -1,12 +1,16 @@
 #!/bin/bash
-# Runs every 5 minutes. Heals a dead/stale mount, re-applies the firewall rule and
-# logs runaway dockerd memory. Pause it with: touch <stack>/MAINTENANCE
+# Runs every minute. Heals a dead/stale mount (after two failed checks), re-applies the
+# firewall rules, logs runaway dockerd memory and runs the management-page agent.
+# Pause healing with: touch <stack>/MAINTENANCE
 . "$(dirname "$0")/common.sh"
 
 exec 9>/tmp/debrid-watchdog.lock
 flock -n 9 || exit 0
 
 FAILS=/tmp/debrid-watchdog.fails
+
+# Management page requests + status (also during maintenance, so it can be switched off)
+[ -d "$STACK_DIR/admin/requests" ] && bash "$(dirname "$0")/agent.sh"
 
 [ -f "$STACK_DIR/MAINTENANCE" ] && exit 0
 "$DOCKER" inspect plex >/dev/null 2>&1 || exit 0   # stack deliberately down
