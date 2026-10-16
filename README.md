@@ -14,7 +14,23 @@ It asks which service you use, its API key ([Real-Debrid](https://real-debrid.co
 
 **Needs:** Linux or Synology DSM 7, Docker with Compose v2 (Synology: Container Manager), and a paid Real-Debrid or TorBox account.
 
-**On Synology**, also create the two tasks the installer prints (Control Panel → Task Scheduler: boot + every minute). Regular Linux gets systemd units automatically.
+**On Synology**, also create two tasks in DSM (see [Synology: boot and watchdog tasks](#synology-boot-and-watchdog-tasks)). Regular Linux gets systemd units automatically.
+
+## Synology: boot and watchdog tasks
+
+DSM doesn't support creating root tasks from the command line, so add these two once in **DSM → Control Panel → Task Scheduler**. Without them the stack won't come back properly after a reboot, the mount isn't healed, and management-page actions stay "pending".
+
+1. **Create → Triggered Task → User-defined script**
+   - *General:* name `debrid-boot`, user **root**, event **Boot-up**
+   - *Task Settings:* `bash /volume1/@debrid/scripts/boot.sh`
+2. **Create → Scheduled Task → User-defined script**
+   - *General:* name `debrid-watchdog`, user **root**
+   - *Schedule:* **daily**, first run **00:00**, frequency **every 1 minute**, last run **23:59**
+   - *Task Settings:* `bash /volume1/@debrid/scripts/watchdog.sh`
+
+DSM warns about running as root and asks for your password; confirm both. Installed somewhere else with `DEBRID_DIR`? Use that path instead of `/volume1/@debrid`.
+
+**Check:** after a minute, *updated* on the management page changes every minute, or `sudo tail -3 /volume1/@debrid/logs/debrid.log` shows new entries.
 
 ## What you get
 

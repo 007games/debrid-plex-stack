@@ -246,6 +246,7 @@ persist() {
     info "Synology: create two tasks in Control Panel > Task Scheduler > Create (user: root):"
     info "  1. Triggered Task, event Boot-up:          bash $DEBRID_DIR/scripts/boot.sh"
     info "  2. Scheduled Task, daily, every 1 minute:  bash $DEBRID_DIR/scripts/watchdog.sh"
+    info "  Step by step: https://github.com/$REPO#synology-boot-and-watchdog-tasks"
   elif command -v systemctl >/dev/null && [ -d /etc/systemd/system ]; then
     cat >/etc/systemd/system/debrid-boot.service <<EOF
 [Unit]
