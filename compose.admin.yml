@@ -35,6 +35,7 @@ services:
       - ./admin/state:/data/state:ro
       - ./admin/auth:/data/auth          # writable so the page can change its own password
       - ./admin/secret:/data/secret:ro   # current keys, shown only after password re-entry
+      - ./admin/demo:/app/demo:ro        # the public map at /demo (static files)
     tmpfs:
       - /tmp:size=16m
     command: ["python", "/app/app.py", "serve"]

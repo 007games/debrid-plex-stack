@@ -335,9 +335,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", (headers or {}).get("Content-Security-Policy",
+                         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"))
         for k, v in (headers or {}).items():
-            self.send_header(k, v)
+            if k != "Content-Security-Policy":
+                self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)
@@ -372,6 +374,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         if path == "/healthz":
             return self.send(200, "ok", "text/plain")
+        if path in ("/demo", "/demo/", "/demo.js"):
+            return self.demo(path)
         token, s = self.session()
         if not s:
             if path == "/login":
@@ -398,6 +402,16 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(404, page("Not found", "<p>Not found.</p>", s))
 
     do_HEAD = do_GET
+
+    def demo(self, path):
+        name, ctype = ("demo.js", "text/javascript; charset=utf-8") if path == "/demo.js" else ("index.html", "text/html; charset=utf-8")
+        try:
+            data = (DEMO_DIR / name).read_bytes()
+        except OSError:
+            return self.send(404, "demo not installed", "text/plain")
+        # The demo page may run its own script from this server, nothing else
+        csp = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        return self.send(200, data, ctype, {"Content-Security-Policy": csp})
 
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
@@ -489,12 +503,18 @@ class Handler(BaseHTTPRequestHandler):
         return self.redirect(back + "?m=" + urllib.parse.quote("Queued. The host applies it within a minute; refresh to see the result."))
 
 
+# Live map of the stack, linked from the login page (override with ADMIN_DEMO_URL)
+DEMO_URL = os.environ.get("ADMIN_DEMO_URL", "/demo")
+DEMO_DIR = Path(os.environ.get("ADMIN_DEMO_DIR", "/app/demo"))
+
+
 def login_page(msg=""):
     m = f'<p class="bad">{html.escape(msg)}</p>' if msg else ""
     return page("Log in", f"""<div class="card" style="max-width:380px;margin:40px auto">
 <h2>Log in</h2>{m}<form method="post" action="/login">
 <label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
-<p><button>Log in</button></p></form><p class="muted">Only reachable from your home network.</p></div>""")
+<p><button>Log in</button></p></form><p class="muted">Only reachable from your home network.</p>
+<p><a href="{html.escape(DEMO_URL)}" target="_blank" rel="noopener noreferrer">How it works: live map ↗</a></p></div>""")
 
 
 class Server(ThreadingHTTPServer):

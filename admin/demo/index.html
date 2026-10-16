@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Debrid Stack Map</title>
+<style>
+/* Layout: one living node network (internet → NAS → home) on a quiet field; legend and back link below. */
+:root{
+  --bg:#eef0f7; --field:#f7f8fc; --zone:rgba(91,91,214,.05); --zone-line:rgba(91,91,214,.16); --ink:#151a2d; --muted:#5f6886; --line:#d8dcea;
+  --core:#ffffff; --core-2:#f2f2fb; --accent:#5b5bd6; --accent-2:#9a5cf0;
+  --egress:#cf7a1f; --internal:#7a8397; --lan:#0f9a70; --admin:#5b5bd6; --danger:#d23f4b; --wire-bg:rgba(30,40,90,.07);
+  --plex:#d99a00; --docker:#2496ed; --rclone:#3f79ad; --android:#2fae6a; --apple:#151a2d;
+  --f-body:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#070a14; --field:#0b1020; --zone:rgba(139,140,255,.05); --zone-line:rgba(139,140,255,.14); --ink:#e7eaf6; --muted:#8f98b9; --line:#232b4b;
+  --core:#18203f; --core-2:#11172e; --accent:#8b8cff; --accent-2:#c08cff;
+  --egress:#f6a54c; --internal:#a3acc6; --lan:#3fe0aa; --admin:#9495ff; --danger:#ff6b74; --wire-bg:rgba(160,170,255,.07);
+  --plex:#ebaf00; --docker:#4aa8f5; --rclone:#6b9fd0; --android:#3ddc84; --apple:#e7eaf6;
+  color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:14.5px/1.55 var(--f-body);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding-inline:clamp(16px,3vw,28px);padding-block:20px 32px}
+a{color:var(--accent)}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-2));flex:none;box-shadow:0 8px 20px -10px var(--accent)}
+.logo svg{width:15px;height:15px}
+h1{font:750 clamp(22px,3vw,30px)/1.05 var(--f-body);letter-spacing:-.025em;margin:0}
+.lede{color:var(--muted);margin:0;font-size:13.5px;flex:1 1 320px;min-width:0}
+.board{background:var(--field);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 30px 60px -40px rgba(20,24,70,.55)}
+.scroll{overflow-x:auto}
+svg.net{display:block;width:100%;min-width:820px;height:auto}
+.zone{fill:var(--zone);stroke:var(--zone-line);stroke-dasharray:4 6}
+.zlabel{font:600 10.5px var(--f-mono);letter-spacing:.16em;fill:var(--muted)}
+.node{cursor:default}
+.halo{transform-box:fill-box;transform-origin:center;animation:breathe 4.2s ease-in-out infinite}
+@keyframes breathe{0%,100%{transform:scale(.92);opacity:.55}50%{transform:scale(1.08);opacity:.95}}
+.core{stroke-width:1.6}
+.ring{fill:none;stroke-width:1.2;stroke-dasharray:2 5;transform-box:fill-box;transform-origin:center;animation:spin 18s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hit .core{animation:hit .7s ease-out}
+@keyframes hit{0%{stroke-width:6}100%{stroke-width:1.6}}
+.ping{fill:none;stroke-width:2;opacity:0}
+.hit .ping{animation:ping .9s ease-out}
+@keyframes ping{0%{opacity:.85;transform:scale(1)}100%{opacity:0;transform:scale(1.9)}}
+.ping{transform-box:fill-box;transform-origin:center}
+.label{font:600 12.5px var(--f-body);fill:var(--ink);text-anchor:middle}
+.sub{font:400 10px var(--f-mono);fill:var(--muted);text-anchor:middle}
+.icon{fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.edge{fill:none;stroke-linecap:round}
+.edge.bg{stroke:var(--wire-bg);stroke-width:9}
+.edge.dash{stroke-dasharray:2 6}
+.comet{filter:url(#glow)}
+.chip{font:500 9.5px var(--f-mono)}
+.chip rect{fill:var(--field);stroke:var(--line)}
+.fw{fill:url(#fwg)}
+.scan{animation:scan 3.4s ease-in-out infinite}
+@keyframes scan{0%,100%{transform:translateY(0)}50%{transform:translateY(300px)}}
+.beat{animation:beat 1.4s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+@keyframes beat{0%,60%,100%{transform:scale(1)}10%{transform:scale(1.18)}20%{transform:scale(1)}30%{transform:scale(1.1)}}
+.xmark{stroke:var(--danger);stroke-width:3.5;stroke-linecap:round}
+.note{font:600 10.5px var(--f-body);fill:var(--danger)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;padding:10px 16px 14px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:22px;height:4px;border-radius:3px;display:inline-block}
+.foot{margin-top:12px;color:var(--muted);font-size:11.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+@media (prefers-reduced-motion:reduce){.halo,.ring,.scan,.beat,.hit .core,.hit .ping{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 5v14l11-7z"/></svg></div>
+    <h1>Debrid Stack Map</h1>
+    <p class="lede">A living view of your stack: every light is data on its way, every node lights up when data arrives.</p>
+  </header>
+  <div class="board">
+    <div class="scroll">
+      <svg class="net" id="net" viewBox="0 0 1000 520" role="img" aria-label="Real-Debrid streams through the router to Zurg, rclone, the read-only library and Plex on the NAS, then through a LAN-only firewall to the TV, phone and laptop. Nothing comes in from the internet.">
+        <defs>
+          <filter id="glow" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="9"/></filter>
+          <radialGradient id="coreg" cx="35%" cy="30%" r="80%"><stop offset="0" style="stop-color:var(--core)"/><stop offset="1" style="stop-color:var(--core-2)"/></radialGradient>
+          <linearGradient id="fwg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" style="stop-color:var(--danger);stop-opacity:0"/><stop offset=".5" style="stop-color:var(--danger);stop-opacity:.22"/><stop offset="1" style="stop-color:var(--danger);stop-opacity:0"/></linearGradient>
+          <linearGradient id="scang" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--danger);stop-opacity:0"/><stop offset=".5" style="stop-color:var(--danger);stop-opacity:.9"/><stop offset="1" style="stop-color:var(--danger);stop-opacity:0"/></linearGradient>
+        </defs>
+        <rect class="zone" x="14" y="44" width="236" height="462" rx="26"/>
+        <rect class="zone" x="264" y="44" width="476" height="462" rx="26"/>
+        <rect class="zone" x="784" y="44" width="202" height="462" rx="26"/>
+        <text class="zlabel" x="34" y="72">INTERNET</text>
+        <g id="nas-head"></g>
+        <text class="zlabel" x="804" y="72">HOME NETWORK</text>
+        <g>
+          <rect class="fw" x="744" y="100" width="36" height="390" rx="18"/>
+          <rect class="scan" x="757" y="100" width="10" height="70" rx="5" fill="url(#scang)"/>
+          <text class="chip" x="762" y="506" text-anchor="middle" style="fill:var(--danger)">firewall · LAN only</text>
+        </g>
+        <g id="edges"></g>
+        <g id="chips"></g>
+        <g id="comets"></g>
+        <g id="nodes"></g>
+      </svg>
+    </div>
+    <div class="legend" aria-label="Legend">
+      <span><i style="background:var(--egress)"></i>internet (Zurg only)</span>
+      <span><i style="background:var(--internal)"></i>internal, no internet</span>
+      <span><i style="background:var(--lan)"></i>home network</span>
+      <span><i style="background:var(--admin)"></i>management</span>
+      <span><i style="background:var(--danger)"></i>blocked</span>
+    </div>
+  </div>
+  <div class="foot">
+    <span>Hover a node for what it does. Served by your NAS; works without internet.</span>
+    <span><a href="/login">Back to the management page</a></span>
+  </div>
+  <p class="foot" style="margin-top:4px">Synology, Plex, Docker, rclone, Android and Apple logos are trademarks of their owners, shown only to identify the products (shapes from Simple Icons). Other icons after Lucide (ISC).</p>
+</div>
+<script src="/demo.js" defer></script>
+</body>
+</html>
