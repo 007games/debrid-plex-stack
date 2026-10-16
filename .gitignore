@@ -14,3 +14,14 @@ admin/requests/
 admin/state/
 admin/auth/
 admin/secret/
+
+# Safety net: never commit keys, certificates or env files, wherever they end up
+*.pem
+*.key
+*.p12
+*.pfx
+*.env
+.env.*
+*.hash
+secret/
+secrets/
