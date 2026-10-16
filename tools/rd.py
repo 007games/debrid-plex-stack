@@ -295,6 +295,101 @@ def cmd_expiry(rd, a):
     sys.exit(1 if days < a.warn_days else 0)
 
 
+# ------------------------------------------------------------------- duplicates
+
+RELEASE_TAG = re.compile(
+    r"\b(19\d\d|20\d\d)\b|\bs\d{1,2}(e\d{1,3})?\b|\bseason\b|\bcomplete\b|"
+    r"\b(2160p|1080p|720p|480p|4k|uhd|remux|bluray|blu ray|web ?dl|webrip|hdr|dv|x264|x265|h ?26[45]|hevc|avc)\b")
+
+
+def title_key(name):
+    """Rough 'same title' key from a release name: words before the year/season/quality tags."""
+    s = re.sub(r"\.(mkv|mp4|avi|m4v|ts)$", "", name.lower())
+    s = re.sub(r"[._\-\[\]\(\)\{\}]+", " ", s)
+    m = RELEASE_TAG.search(s)
+    title = re.sub(r"\s+", " ", s[:m.start()] if m else s).strip()
+    year = re.search(r"\b(19\d\d|20\d\d)\b", s)
+    return title, (year.group(1) if year else "")
+
+
+def find_duplicates(ts):
+    """exact: same hash added more than once (identical content, safe to keep one).
+    similar: different hashes that look like the same title (needs a human to choose)."""
+    by_hash = {}
+    for t in ts:
+        by_hash.setdefault(t["hash"].lower(), []).append(t)
+    exact = []
+    for h, items in by_hash.items():
+        if len(items) < 2:
+            continue
+        # keep a working copy, and the oldest one when several work
+        items.sort(key=lambda t: (t["status"] != "downloaded", t.get("added", "")))
+        exact.append({"hash": h, "filename": items[0]["filename"], "bytes": items[0].get("bytes", 0),
+                      "keep": items[0]["id"], "remove": [t["id"] for t in items[1:]]})
+    exact.sort(key=lambda g: -len(g["remove"]))
+    by_title = {}
+    for items in by_hash.values():
+        t = items[0]
+        key = title_key(t["filename"])
+        if key[0]:
+            by_title.setdefault(key, []).append(t)
+    similar = []
+    for (title, year), items in by_title.items():
+        if len(items) < 2:
+            continue
+        items.sort(key=lambda t: t.get("added", ""))
+        similar.append({"title": title, "year": year, "items": [
+            {"id": t["id"], "filename": t["filename"], "bytes": t.get("bytes", 0),
+             "status": t["status"], "added": t.get("added", "")[:10]} for t in items]})
+    similar.sort(key=lambda g: (-len(g["items"]), g["title"]))
+    return exact, similar
+
+
+def cmd_duplicates(rd, a):
+    ts = rd.torrents()
+    exact, similar = find_duplicates(ts)
+    extra = sum(len(g["remove"]) for g in exact)
+    removed = failed = 0
+    if a.remove_exact:
+        for g in exact:
+            for tid in g["remove"]:
+                try:
+                    rd.delete(tid)
+                    removed += 1
+                except RDError:
+                    failed += 1
+        if removed:
+            exact, similar = find_duplicates(rd.torrents())
+    report = {"scanned": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "total": len(ts),
+              "exact_groups": len(exact), "exact_extra": sum(len(g["remove"]) for g in exact),
+              "similar_groups": len(similar), "removed": removed, "failed": failed,
+              "exact": exact[:300], "similar": similar[:300]}
+    if a.json:
+        with open(a.json, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=1)
+    if a.remove_exact:
+        print(f"removed {removed} exact duplicate(s)" + (f", {failed} failed" if failed else ""))
+    else:
+        print(f"{len(ts)} torrents: {extra} exact duplicate(s) in {len(exact)} title(s); "
+              f"{len(similar)} title(s) with several versions")
+
+
+def cmd_delete(rd, a):
+    ok = 0
+    for tid in a.ids:
+        if not re.fullmatch(r"[A-Za-z0-9]{6,32}", tid):
+            print(f"  skip invalid id: {tid}")
+            continue
+        try:
+            rd.delete(tid)
+            ok += 1
+        except RDError as e:
+            print(f"  {tid}: {e}")
+    print(f"deleted {ok} of {len(a.ids)}")
+    if ok < len(a.ids):
+        sys.exit(1)
+
+
 # -------------------------------------------------------------------------- main
 
 def main():
@@ -323,12 +418,17 @@ def main():
     sp = sub.add_parser("backup"); sp.add_argument("-o", "--output")
     sp = sub.add_parser("cleanup"); sp.add_argument("--yes", action="store_true")
     sp = sub.add_parser("expiry"); sp.add_argument("--warn-days", type=float, default=7)
+    sp = sub.add_parser("duplicates", help="report duplicates; --remove-exact deletes identical copies")
+    sp.add_argument("--json", help="write the full report to this file")
+    sp.add_argument("--remove-exact", action="store_true", help="delete extra copies of the same hash (keeps one)")
+    sp = sub.add_parser("delete", help="delete torrents by id"); sp.add_argument("ids", nargs="+")
 
     a = p.parse_args()
     rd = RD(load_token(a.token_file))
     try:
         {"status": cmd_status, "list": cmd_list, "add": cmd_add, "restore": cmd_restore,
-         "backup": cmd_backup, "cleanup": cmd_cleanup, "expiry": cmd_expiry}[a.cmd](rd, a)
+         "backup": cmd_backup, "cleanup": cmd_cleanup, "expiry": cmd_expiry,
+         "duplicates": cmd_duplicates, "delete": cmd_delete}[a.cmd](rd, a)
     except RDError as e:
         sys.exit(f"Error: {e}")
 

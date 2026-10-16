@@ -74,6 +74,19 @@ do_backup() {
   echo "saved $name"
 }
 
+# rd.py with the current Real-Debrid key (passed in the environment, never as an argument)
+rdpy() {
+  [ "$PROVIDER" = realdebrid ] || { echo "only available with Real-Debrid"; return 1; }
+  command -v python3 >/dev/null || { echo "python3 is not installed on the host"; return 1; }
+  RD_TOKEN="$(sed -n 's/^token: //p' "$STACK_DIR/zurg/config.yml" | tr -d '\r')" python3 "$STACK_DIR/tools/rd.py" "$@"
+}
+
+# Duplicate report for the page (built in PRIV, published to STATE)
+do_duplicates() {  # do_duplicates [--remove-exact]
+  rdpy duplicates --json "$PRIV/duplicates.json" "$@" || return 1
+  put "$PRIV/duplicates.json" duplicates.json
+}
+
 # ------------------------------------------------------------------ requests
 
 # Leftovers from an interrupted write (the page writes .tmp, then renames to .req)
@@ -104,6 +117,9 @@ for f in "$REQ"/*.req; do
     maintenance_off) rm -f "$STACK_DIR/MAINTENANCE"; out="watchdog active" ;;
     plex_setup)      out=$(bash "$STACK_DIR/scripts/plex-setup.sh" 2>&1) || rc=1 ;;
     backup)          out=$(do_backup 2>&1) || rc=1 ;;
+    scan_duplicates) out=$(do_duplicates 2>&1) || rc=1 ;;
+    remove_exact_duplicates) out=$(do_duplicates --remove-exact 2>&1) || rc=1 ;;
+    delete_torrent)  out=$(rdpy delete "$value" 2>&1) || rc=1; do_duplicates >/dev/null 2>&1 ;;
     *)               result "$action" FAIL "unknown action"; continue ;;
   esac
   out=$(echo "$out" | tail -n 1)

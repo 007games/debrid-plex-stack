@@ -81,6 +81,7 @@ The installer offers a small web page at `https://<server-ip>:8099` (LAN only, p
 - see your current key (masked; full key after re-entering the password) and change it (checked with the provider before it's saved),
 - switch provider,
 - restart the stack, pause the watchdog, and download library backups,
+- find duplicates in your Real-Debrid library: remove identical copies in one go, and review titles that exist in several versions,
 - change the page's own password,
 - get a warning bar (and a daily log line) when premium has 7 days or less left; set `EXPIRY_WARN_DAYS` in `.env` to change that.
 
@@ -97,6 +98,7 @@ sudo bash /opt/debrid/uninstall.sh           # remove (add --purge to delete eve
 sudo bash /opt/debrid/scripts/set-key.sh realdebrid KEY   # change a key from the shell
 curl -fsSL .../install.sh | sudo bash        # re-run to update; keeps your settings
 python tools/rd.py status                    # Real-Debrid account helper (RD_TOKEN=...)
+python tools/rd.py duplicates [--remove-exact] # report / remove identical copies (same hash)
 ```
 
 Options: `DEBRID_DIR=/path`, `PLEX_LANGUAGE=nl-NL`, `PROVIDER=torbox`, or `RD_TOKEN=...`/`TORBOX_API_KEY=...` plus `PLEX_CLAIM=...` for a non-interactive install. Run `install.sh --check` to see what would be detected.
