@@ -97,7 +97,7 @@ for f in "$REQ"/*.req; do
   [ -e "$f" ] || [ -L "$f" ] || continue
   # Move it out of the page's reach first (rename never follows links), then inspect
   mv -fT "$f" "$PRIV/req" 2>/dev/null || { rm -f "$f"; continue; }
-  if [ -L "$PRIV/req" ] || [ ! -f "$PRIV/req" ] || [ "$(stat -c %s "$PRIV/req")" -gt 1024 ]; then
+  if [ -L "$PRIV/req" ] || [ ! -f "$PRIV/req" ] || [ "$(stat -c %s "$PRIV/req")" -gt 4096 ]; then
     rm -f "$PRIV/req"; result invalid FAIL "rejected request file"; continue
   fi
   count=$((count + 1))
@@ -105,7 +105,11 @@ for f in "$REQ"/*.req; do
   rm -f "$PRIV/req"
   [ "$count" -gt 10 ] && { result "$action" FAIL "too many requests at once"; continue; }
   [[ "$action" =~ ^[a-z_]{1,30}$ ]] || { result invalid FAIL "bad action name"; continue; }
-  [[ "$value" =~ ^[A-Za-z0-9_-]{0,100}$ ]] || { result "$action" FAIL "bad value"; continue; }
+  if [ "$action" = delete_torrents ]; then
+    [[ "$value" =~ ^[A-Za-z0-9]{6,32}(,[A-Za-z0-9]{6,32}){0,249}$ ]] || { result "$action" FAIL "bad id list"; continue; }
+  else
+    [[ "$value" =~ ^[A-Za-z0-9_-]{0,100}$ ]] || { result "$action" FAIL "bad value"; continue; }
+  fi
 
   # Tell the page what is running (cleared when done)
   printf '%s\t%s\n' "$action" "$(date '+%F %T')" >"$PRIV/busy" && put "$PRIV/busy" busy.txt
@@ -122,6 +126,7 @@ for f in "$REQ"/*.req; do
     scan_duplicates) out=$(do_duplicates 2>&1) || rc=1 ;;
     remove_exact_duplicates) out=$(do_duplicates --remove-exact 2>&1) || rc=1 ;;
     delete_torrent)  out=$(rdpy delete "$value" 2>&1) || rc=1; do_duplicates >/dev/null 2>&1 ;;
+    delete_torrents) out=$(rdpy delete $(echo "$value" | tr ',' ' ') 2>&1) || rc=1; do_duplicates >/dev/null 2>&1 ;;
     *)               result "$action" FAIL "unknown action"; continue ;;
   esac
   out=$(echo "$out" | tail -n 1)
