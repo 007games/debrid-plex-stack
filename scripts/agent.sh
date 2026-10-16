@@ -81,14 +81,14 @@ rdpy() {
   RD_TOKEN="$(sed -n 's/^token: //p' "$STACK_DIR/zurg/config.yml" | tr -d '\r')" python3 "$STACK_DIR/tools/rd.py" "$@"
 }
 
-# Run a long job while publishing its progress file to the page every 2 seconds
+# Run a long job while publishing its progress file to the page every second
 with_progress() {
   rm -f "$PRIV/progress.json" "$STATE/progress.json"
   "$@" >"$PRIV/progress.out" 2>&1 &
   local pid=$! rc
   while kill -0 "$pid" 2>/dev/null; do
     if [ -f "$PRIV/progress.json" ]; then cp "$PRIV/progress.json" "$PRIV/progress.pub" && put "$PRIV/progress.pub" progress.json; fi
-    sleep 2
+    sleep 1
   done
   wait "$pid"; rc=$?
   rm -f "$STATE/progress.json" "$PRIV/progress.json"
