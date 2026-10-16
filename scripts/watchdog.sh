@@ -12,6 +12,7 @@ FAILS=/tmp/debrid-watchdog.fails
 # Management page requests + status (also during maintenance, so it can be switched off)
 [ -d "$STACK_DIR/admin/requests" ] && bash "$(dirname "$0")/agent.sh"
 
+[ -f "$STACK_DIR/STOPPED" ] && exit 0       # stopped on purpose with scripts/stop.sh
 [ -f "$STACK_DIR/MAINTENANCE" ] && exit 0
 "$DOCKER" inspect plex >/dev/null 2>&1 || exit 0   # stack deliberately down
 

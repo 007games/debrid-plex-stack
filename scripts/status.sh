@@ -7,6 +7,8 @@ bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
 info() { printf '        %s\n' "$*"; }
 
 echo "Provider: $PROVIDER"
+[ -f "$STACK_DIR/STOPPED" ] && bad "stack is STOPPED on purpose (scripts/start.sh to start it)"
+[ -f "$STACK_DIR/MAINTENANCE" ] && info "maintenance mode: watchdog paused"
 st="$STACK_DIR/admin/state/status.json"
 if [ -f "$st" ]; then
   days=$(sed -n 's/.*"days_left": *\(-\{0,1\}[0-9]*\).*/\1/p' "$st")

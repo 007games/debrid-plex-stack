@@ -32,6 +32,20 @@ DSM warns about running as root and asks for your password; confirm both. Instal
 
 **Check:** after a minute, *updated* on the management page changes every minute, or `sudo tail -3 /volume1/@debrid/logs/debrid.log` shows new entries.
 
+**Optional: stop/start buttons.** Create two more *Scheduled Tasks* (user **root**, untick *Enabled* so they never run on their own): `debrid-stop` → `bash /volume1/@debrid/scripts/stop.sh` and `debrid-start` → `bash /volume1/@debrid/scripts/start.sh`. Select one and click **Run** to stop or start the whole stack.
+
+## Stop and start
+
+`sudo bash scripts/stop.sh` stops everything (Plex, zurg, rclone, the page) and **keeps it stopped**, also after a reboot: the watchdog and boot task leave it alone. `sudo bash scripts/start.sh` brings it back. Stopping containers in Container Manager or with `docker stop` doesn't stick: the watchdog restarts them within a couple of minutes (use *Pause watchdog* on the management page if you need that).
+
+## Moving to another machine
+
+1. **Old machine:** `sudo bash scripts/export.sh` writes `debrid-export-<date>.tar.gz` to your home folder: the Plex library, watch history and settings, and the page password. It contains secrets, so copy it privately (e.g. WinSCP/scp) and delete it afterwards.
+2. **Old machine:** `sudo bash scripts/stop.sh`. Both machines would otherwise announce the same Plex server.
+3. **New machine:** run the install command (use the same debrid key; the Plex claim code can be any fresh one).
+4. **New machine:** `sudo bash /opt/debrid/scripts/import.sh ~/debrid-export-<date>.tar.gz` restores Plex and the page password, then re-applies the Plex settings for the new IP. The new machine keeps its own `.env` and keys; the old ones are saved in `import-reference/` for comparison.
+5. Check `sudo bash /opt/debrid/scripts/status.sh` and play something. Then on the old machine: `sudo bash uninstall.sh --purge` (Synology: also delete the debrid tasks), and in Plex remove the extra server entry under *Settings → Authorized Devices* if one appears.
+
 ## What you get
 
 ```mermaid
@@ -78,6 +92,7 @@ The page has no Docker access and can't change the stack itself: it only queues 
 
 ```bash
 sudo bash /opt/debrid/scripts/status.sh      # health check (Synology: /volume1/@debrid)
+sudo bash /opt/debrid/scripts/stop.sh        # stop everything and keep it stopped (start.sh to undo)
 sudo bash /opt/debrid/uninstall.sh           # remove (add --purge to delete everything)
 sudo bash /opt/debrid/scripts/set-key.sh realdebrid KEY   # change a key from the shell
 curl -fsSL .../install.sh | sudo bash        # re-run to update; keeps your settings

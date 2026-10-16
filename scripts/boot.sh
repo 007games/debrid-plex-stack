@@ -12,4 +12,8 @@ for _ in $(seq 60); do
 done
 
 ensure_firewall
+if [ -f "$STACK_DIR/STOPPED" ]; then
+  log "boot: stack was stopped with scripts/stop.sh, not starting it (run scripts/start.sh)"
+  exit 0
+fi
 compose up -d >>"$LOG" 2>&1 && log "boot: stack up" || log "boot: compose up FAILED"
