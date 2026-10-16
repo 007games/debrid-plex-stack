@@ -359,7 +359,8 @@ def cmd_duplicates(rd, a):
                 except RDError:
                     failed += 1
         if removed:
-            exact, similar = find_duplicates(rd.torrents())
+            ts = rd.torrents()
+            exact, similar = find_duplicates(ts)
     report = {"scanned": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "total": len(ts),
               "exact_groups": len(exact), "exact_extra": sum(len(g["remove"]) for g in exact),
               "similar_groups": len(similar), "removed": removed, "failed": failed,

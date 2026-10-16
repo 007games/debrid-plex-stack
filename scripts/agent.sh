@@ -107,6 +107,8 @@ for f in "$REQ"/*.req; do
   [[ "$action" =~ ^[a-z_]{1,30}$ ]] || { result invalid FAIL "bad action name"; continue; }
   [[ "$value" =~ ^[A-Za-z0-9_-]{0,100}$ ]] || { result "$action" FAIL "bad value"; continue; }
 
+  # Tell the page what is running (cleared when done)
+  printf '%s\t%s\n' "$action" "$(date '+%F %T')" >"$PRIV/busy" && put "$PRIV/busy" busy.txt
   rc=0
   case "$action" in
     set_rd_token)    out=$(bash "$STACK_DIR/scripts/set-key.sh" realdebrid "$value" 2>&1) || rc=1 ;;
@@ -124,6 +126,7 @@ for f in "$REQ"/*.req; do
   esac
   out=$(echo "$out" | tail -n 1)
   if [ $rc = 0 ]; then result "$action" OK "$out"; else result "$action" FAIL "$out"; fi
+  rm -f "$STATE/busy.txt"
   case "$action" in set_*|switch_provider) rm -f "$PRIV/account" ;; esac
   # Re-read settings in case a provider switch changed them
   . "$STACK_DIR/scripts/common.sh"
