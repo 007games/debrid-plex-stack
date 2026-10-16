@@ -4,8 +4,10 @@
 # Pause healing with: touch <stack>/MAINTENANCE
 . "$(dirname "$0")/common.sh"
 
-exec 9>/tmp/debrid-watchdog.lock
-flock -n 9 || exit 0
+# Lock held by a separate flock process (-o), so long-running children never inherit it
+if [ -z "${DEBRID_WD_LOCKED:-}" ]; then
+  DEBRID_WD_LOCKED=1 exec flock -n -o /tmp/debrid-watchdog.v2.lock bash "$0" "$@"
+fi
 
 FAILS=/tmp/debrid-watchdog.fails
 

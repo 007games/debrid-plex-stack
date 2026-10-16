@@ -17,8 +17,11 @@ STATE="$ADMIN/state"
 PRIV="$ADMIN/.agent"            # root-only: caches, markers, temp files
 [ -d "$REQ" ] || exit 0
 
-exec 8>/tmp/debrid-agent.lock
-flock -n 8 || exit 0
+# Hold the lock in a separate flock process (-o): anything this script starts in the
+# background must not inherit the lock, or the agent stays blocked while it runs
+if [ -z "${DEBRID_AGENT_LOCKED:-}" ]; then
+  DEBRID_AGENT_LOCKED=1 exec flock -n -o /tmp/debrid-agent.v2.lock bash "$0" "$@"
+fi
 
 umask 022
 if [ -L "$PRIV" ] || { [ -e "$PRIV" ] && [ ! -d "$PRIV" ]; }; then rm -f "$PRIV"; fi
