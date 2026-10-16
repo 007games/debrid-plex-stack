@@ -25,3 +25,7 @@ admin/secret/
 *.hash
 secret/
 secrets/
+
+# Local, personal scripts (contain an API key): never commit
+scripts/*.py
+scripts/added_*.txt

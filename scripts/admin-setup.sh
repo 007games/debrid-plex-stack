@@ -18,18 +18,25 @@ if [ -z "$pw" ]; then
 fi
 [ ${#pw} -ge 8 ] || { echo "password must be at least 8 characters"; exit 1; }
 
+# Build everything in a root-only folder and rename it into place: admin/auth is
+# writable by the page, so never write through a path that could be a planted symlink
+P="$A/.agent"; [ -L "$P" ] && rm -f "$P"; mkdir -p "$P"; chown root:root "$P"; chmod 700 "$P"
+put_auth() { mv -fT "$1" "$A/auth/$2" 2>/dev/null || { rm -f "$A/auth/$2"; mv -f "$1" "$A/auth/$2"; }; }
+
 image=$(sed -n 's/.*ADMIN_IMAGE:-\([^}]*\)}.*/\1/p' compose.admin.yml)
-printf '%s\n' "$pw" | "$DOCKER" run --rm -i -v "$A/app.py:/app/app.py:ro" "$image" python /app/app.py hash >"$A/auth/password.hash" \
-  || { echo "could not hash the password"; exit 1; }
+printf '%s\n' "$pw" | "$DOCKER" run --rm -i -v "$A/app.py:/app/app.py:ro" "$image" python /app/app.py hash >"$P/password.hash" \
+  || { rm -f "$P/password.hash"; echo "could not hash the password"; exit 1; }
+put_auth "$P/password.hash" password.hash
 unset pw pw2
 
 # Self-signed certificate for the LAN IP (browsers will warn once; that's expected)
-if [ ! -f "$A/auth/cert.pem" ] && command -v openssl >/dev/null; then
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=debrid-admin" \
-    -addext "subjectAltName=IP:$(envval LAN_IP)" \
-    -keyout "$A/auth/key.pem" -out "$A/auth/cert.pem" >/dev/null 2>&1 \
-  || openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=debrid-admin" \
-    -keyout "$A/auth/key.pem" -out "$A/auth/cert.pem" >/dev/null 2>&1
+if { [ ! -f "$A/auth/cert.pem" ] || [ -L "$A/auth/cert.pem" ]; } && command -v openssl >/dev/null; then
+  if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=debrid-admin" \
+       -addext "subjectAltName=IP:$(envval LAN_IP)" -keyout "$P/key.pem" -out "$P/cert.pem" >/dev/null 2>&1 \
+     || openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=debrid-admin" \
+       -keyout "$P/key.pem" -out "$P/cert.pem" >/dev/null 2>&1; then
+    put_auth "$P/key.pem" key.pem; put_auth "$P/cert.pem" cert.pem
+  fi
 fi
 [ -f "$A/auth/cert.pem" ] || echo "warning: no openssl, the page will use plain HTTP"
 

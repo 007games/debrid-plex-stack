@@ -113,6 +113,7 @@ admin_perms() {
   mkdir -p "$a/secret"
   chown root:root "$a" "$a/app.py"; chmod 755 "$a"; chmod 644 "$a/app.py"
   chown -R 65534:65534 "$a/requests" "$a/auth" "$a/secret"; chmod 700 "$a/requests" "$a/auth" "$a/secret"
-  chmod 600 "$a/auth"/* "$a/secret"/* 2>/dev/null
+  # -type f: never chmod through a symlink the page may have planted
+  find "$a/auth" "$a/secret" -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null
   chown -R root:root "$a/state"; chmod 755 "$a/state" "$a/state/backups"
 }
