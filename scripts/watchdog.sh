@@ -14,6 +14,16 @@ FAILS=/tmp/debrid-watchdog.fails
 # Management page requests + status (also during maintenance, so it can be switched off)
 [ -d "$STACK_DIR/admin/requests" ] && bash "$(dirname "$0")/agent.sh"
 
+# For the rest of this minute, look in the page's inbox every 3 seconds and run the
+# agent only when a request is waiting (one poller at a time; never holds our lock)
+if [ -d "$STACK_DIR/admin/requests" ]; then
+  flock -n -o /tmp/debrid-poll.lock bash -c '
+    for _ in $(seq 18); do
+      sleep 3
+      ls "$1"/admin/requests/*.req >/dev/null 2>&1 && bash "$1"/scripts/agent.sh
+    done' _ "$STACK_DIR" >/dev/null 2>&1 &
+fi
+
 [ -f "$STACK_DIR/STOPPED" ] && exit 0       # stopped on purpose with scripts/stop.sh
 [ -f "$STACK_DIR/MAINTENANCE" ] && exit 0
 "$DOCKER" inspect plex >/dev/null 2>&1 || exit 0   # stack deliberately down
