@@ -312,6 +312,16 @@ def title_key(name):
     return title, (year.group(1) if year else "")
 
 
+def write_progress(path, done, total, failed=0):
+    """Small JSON file the agent publishes to the management page."""
+    if not path:
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"done": done, "total": total, "failed": failed}, f)
+    os.replace(tmp, path)
+
+
 def find_duplicates(ts):
     """exact: same hash added more than once (identical content, safe to keep one).
     similar: different hashes that look like the same title (needs a human to choose)."""
@@ -351,6 +361,7 @@ def cmd_duplicates(rd, a):
     extra = sum(len(g["remove"]) for g in exact)
     removed = failed = 0
     if a.remove_exact:
+        write_progress(a.progress, 0, extra)
         for g in exact:
             for tid in g["remove"]:
                 try:
@@ -358,6 +369,7 @@ def cmd_duplicates(rd, a):
                     removed += 1
                 except RDError:
                     failed += 1
+                write_progress(a.progress, removed + failed, extra, failed)
         if removed:
             ts = rd.torrents()
             exact, similar = find_duplicates(ts)
@@ -377,7 +389,8 @@ def cmd_duplicates(rd, a):
 
 def cmd_delete(rd, a):
     ok = 0
-    for tid in a.ids:
+    write_progress(a.progress, 0, len(a.ids))
+    for i, tid in enumerate(a.ids, 1):
         if not re.fullmatch(r"[A-Za-z0-9]{6,32}", tid):
             print(f"  skip invalid id: {tid}")
             continue
@@ -386,6 +399,7 @@ def cmd_delete(rd, a):
             ok += 1
         except RDError as e:
             print(f"  {tid}: {e}")
+        write_progress(a.progress, i, len(a.ids), i - ok)
     print(f"deleted {ok} of {len(a.ids)}")
     if ok < len(a.ids):
         sys.exit(1)
@@ -422,7 +436,9 @@ def main():
     sp = sub.add_parser("duplicates", help="report duplicates; --remove-exact deletes identical copies")
     sp.add_argument("--json", help="write the full report to this file")
     sp.add_argument("--remove-exact", action="store_true", help="delete extra copies of the same hash (keeps one)")
+    sp.add_argument("--progress", help="keep a small JSON progress file up to date while deleting")
     sp = sub.add_parser("delete", help="delete torrents by id"); sp.add_argument("ids", nargs="+")
+    sp.add_argument("--progress", help="keep a small JSON progress file up to date")
 
     a = p.parse_args()
     rd = RD(load_token(a.token_file))

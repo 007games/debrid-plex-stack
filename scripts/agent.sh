@@ -81,6 +81,21 @@ rdpy() {
   RD_TOKEN="$(sed -n 's/^token: //p' "$STACK_DIR/zurg/config.yml" | tr -d '\r')" python3 "$STACK_DIR/tools/rd.py" "$@"
 }
 
+# Run a long job while publishing its progress file to the page every 2 seconds
+with_progress() {
+  rm -f "$PRIV/progress.json" "$STATE/progress.json"
+  "$@" >"$PRIV/progress.out" 2>&1 &
+  local pid=$! rc
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ -f "$PRIV/progress.json" ]; then cp "$PRIV/progress.json" "$PRIV/progress.pub" && put "$PRIV/progress.pub" progress.json; fi
+    sleep 2
+  done
+  wait "$pid"; rc=$?
+  rm -f "$STATE/progress.json" "$PRIV/progress.json"
+  cat "$PRIV/progress.out"
+  return $rc
+}
+
 # Duplicate report for the page (built in PRIV, published to STATE)
 do_duplicates() {  # do_duplicates [--remove-exact]
   rdpy duplicates --json "$PRIV/duplicates.json" "$@" || return 1
@@ -124,9 +139,9 @@ for f in "$REQ"/*.req; do
     plex_setup)      out=$(bash "$STACK_DIR/scripts/plex-setup.sh" 2>&1) || rc=1 ;;
     backup)          out=$(do_backup 2>&1) || rc=1 ;;
     scan_duplicates) out=$(do_duplicates 2>&1) || rc=1 ;;
-    remove_exact_duplicates) out=$(do_duplicates --remove-exact 2>&1) || rc=1 ;;
-    delete_torrent)  out=$(rdpy delete "$value" 2>&1) || rc=1; do_duplicates >/dev/null 2>&1 ;;
-    delete_torrents) out=$(rdpy delete $(echo "$value" | tr ',' ' ') 2>&1) || rc=1; do_duplicates >/dev/null 2>&1 ;;
+    remove_exact_duplicates) out=$(with_progress do_duplicates --remove-exact --progress "$PRIV/progress.json") || rc=1 ;;
+    delete_torrent)  out=$(with_progress rdpy delete --progress "$PRIV/progress.json" "$value") || rc=1; do_duplicates >/dev/null 2>&1 ;;
+    delete_torrents) out=$(with_progress rdpy delete --progress "$PRIV/progress.json" $(echo "$value" | tr ',' ' ')) || rc=1; do_duplicates >/dev/null 2>&1 ;;
     *)               result "$action" FAIL "unknown action"; continue ;;
   esac
   out=$(echo "$out" | tail -n 1)
