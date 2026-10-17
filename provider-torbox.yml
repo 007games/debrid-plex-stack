@@ -15,6 +15,9 @@ services:
     init: true
     networks:
       - debrid_egress
+    dns:                      # own resolvers: a hiccup at the ISP's DNS no longer stalls refreshes
+      - 1.1.1.1
+      - 9.9.9.9
     devices:
       - /dev/fuse:/dev/fuse
     cap_add:

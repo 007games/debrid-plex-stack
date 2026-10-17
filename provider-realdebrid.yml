@@ -20,6 +20,9 @@ services:
     networks:
       - debrid_internal
       - debrid_egress
+    dns:                      # own resolvers: a hiccup at the ISP's DNS no longer stalls refreshes
+      - 1.1.1.1
+      - 9.9.9.9
     ports:
       - "127.0.0.1:9999:9999"
     volumes:
