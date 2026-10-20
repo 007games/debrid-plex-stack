@@ -29,16 +29,9 @@ printf '%s\n' "$pw" | "$DOCKER" run --rm -i -v "$A/app.py:/app/app.py:ro" "$imag
 put_auth "$P/password.hash" password.hash
 unset pw pw2
 
-# Self-signed certificate for the LAN IP (browsers will warn once; that's expected)
-if { [ ! -f "$A/auth/cert.pem" ] || [ -L "$A/auth/cert.pem" ]; } && command -v openssl >/dev/null; then
-  if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=debrid-admin" \
-       -addext "subjectAltName=IP:$(envval LAN_IP)" -keyout "$P/key.pem" -out "$P/cert.pem" >/dev/null 2>&1 \
-     || openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=debrid-admin" \
-       -keyout "$P/key.pem" -out "$P/cert.pem" >/dev/null 2>&1; then
-    put_auth "$P/key.pem" key.pem; put_auth "$P/cert.pem" cert.pem
-  fi
-fi
-[ -f "$A/auth/cert.pem" ] || echo "warning: no openssl, the page will use plain HTTP"
+# Certificate: a local CA (install it once per device and the browser warning is gone)
+# and a server certificate it signs; the agent renews it when it gets close to expiry
+bash "$STACK_DIR/scripts/admin-cert.sh" || echo "warning: no certificate (openssl missing?), the page will use plain HTTP"
 
 admin_perms
 

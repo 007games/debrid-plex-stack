@@ -379,6 +379,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, "ok", "text/plain")
         if path in ("/demo", "/demo/", "/demo.js"):
             return self.demo(path)
+        if path == "/ca.crt":     # the local CA's public certificate: no secret, needed before login
+            try:
+                return self.send(200, (AUTH / "ca.pem").read_bytes(), "application/x-x509-ca-cert",
+                                 {"Content-Disposition": 'attachment; filename="debrid-admin-ca.crt"'})
+            except OSError:
+                return self.send(404, "no certificate authority (run scripts/admin-cert.sh)", "text/plain")
+        if path == "/certificate":
+            return self.send(200, page("Certificate", certificate_body(self.headers.get("Host", ""))))
         token, s = self.session()
         if not s:
             if path == "/login":
@@ -751,13 +759,43 @@ def power_page(session):
 </main><script src="/power.js" defer></script></body></html>"""
 
 
+def certificate_body(host):
+    """How to install the page's CA so browsers stop warning (public page)."""
+    host = host if re.match(r"^[A-Za-z0-9.\-]+(:\d{1,5})?$", host or "") else ""
+    dl = html.escape(f"http://{host}/ca.crt" if host else "/ca.crt")
+    return f"""<div class="card">
+<h2>Remove the certificate warning</h2>
+<p class="muted">This page uses its own certificate, so browsers warn that the connection is "not private".
+Install the page's certificate authority once on each device and the warning is gone. The file contains no secrets.</p>
+<p><a href="{dl}"><b>Download the certificate</b></a> <span class="muted">(plain http, so it works before the warning is gone)</span></p>
+<h3>iPhone / iPad</h3>
+<ol>
+<li>Open the download link above in Safari and tap <b>Allow</b> (Tillat) when it asks to download a profile.</li>
+<li>Settings → General → VPN &amp; Device Management (Innstillinger → Generelt → VPN og enhetsadministrasjon) → <b>debrid-admin local CA</b> → Install.</li>
+<li>Settings → General → About → Certificate Trust Settings (Om → Innstillinger for sertifikatklarering) → switch on <b>debrid-admin local CA</b>.</li>
+<li>Close the tab and open the page again.</li>
+</ol>
+<h3>Android</h3>
+<ol>
+<li>Download the certificate with the link above (Chrome).</li>
+<li>Settings → Security → Encryption &amp; credentials → Install a certificate → <b>CA certificate</b> → Install anyway → pick the downloaded file.</li>
+</ol>
+<h3>Windows</h3>
+<ol><li>Download, double-click the file → Install Certificate → Current User → <b>Place all certificates in the following store</b> → Trusted Root Certification Authorities.</li></ol>
+<h3>Mac</h3>
+<ol><li>Download, double-click to add it to Keychain Access, open it there and set Trust → <b>Always Trust</b>.</li></ol>
+<p class="muted">The server certificate is renewed automatically; the installed authority stays valid for 10 years.</p>
+<p><a href="/login">Back to log in</a></p></div>"""
+
+
 def login_page(msg="", nxt=""):
     m = f'<p class="bad">{html.escape(msg)}</p>' if msg else ""
     return page("Log in", f"""<div class="card" style="max-width:380px;margin:40px auto">
 <h2>Log in</h2>{m}<form method="post" action="/login">
+<label for="user">Username</label><input id="user" name="username" value="admin" autocomplete="username" readonly>
 <label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
 <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:10px 0 14px"><input type="checkbox" name="remember" value="yes" style="width:auto;margin:0"> Keep me signed in on this device (30 days)</label><input type="hidden" name="next" value="{html.escape(nxt)}">
-<p><button>Log in</button></p></form><p class="muted">Only reachable from your home network.</p>
+<p><button>Log in</button></p></form><p class="muted">Only reachable from your home network. <a href="/certificate">Remove the certificate warning</a></p>
 <p><a href="{html.escape(DEMO_URL)}" target="_blank" rel="noopener noreferrer">How it works: live map ↗</a></p></div>""")
 
 
@@ -791,6 +829,12 @@ def redirect_to_https(sock):
     """Answer a plain-HTTP request on the HTTPS port with a redirect instead of an empty reply."""
     try:
         head = sock.recv(4096).decode("latin-1", "replace")
+        if re.match(r"^GET /ca\.crt(\?\S*)? HTTP/", head) and (AUTH / "ca.pem").is_file():
+            body = (AUTH / "ca.pem").read_bytes()   # public: lets a phone fetch the CA before it trusts us
+            sock.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-x509-ca-cert\r\n"
+                         b'Content-Disposition: attachment; filename="debrid-admin-ca.crt"\r\n'
+                         b"Content-Length: %d\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n" % len(body) + body)
+            return
         m = re.search(r"^Host:\s*([A-Za-z0-9.\-]+(?::\d{1,5})?)\s*$", head, re.I | re.M)
         target = f"https://{m.group(1)}/" if m else None
         if target:

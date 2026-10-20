@@ -295,6 +295,12 @@ else publish_power degraded "not fully running" 0 0; fi
 
 tail -n 100 "$LOG" 2>/dev/null >"$PRIV/log.txt" && put "$PRIV/log.txt" log.txt
 
+# Once a day: renew the page's certificate when it has less than 30 days left
+if [ -f "$ADMIN/auth/cert.pem" ] && [ ! -f "$PRIV/cert-checked-$(date +%F)" ]; then
+  rm -f "$PRIV"/cert-checked-*; touch "$PRIV/cert-checked-$(date +%F)"
+  bash "$STACK_DIR/scripts/admin-cert.sh" >/dev/null 2>&1 || true
+fi
+
 # Old-style files the agent used to keep in STATE (now in PRIV)
 rm -f "$STATE/.account" "$STATE"/.expiry-logged-* "$STATE/status.tmp" "$STATE/results.tmp"
 
