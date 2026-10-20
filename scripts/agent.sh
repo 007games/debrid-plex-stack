@@ -121,7 +121,8 @@ publish_power() {  # publish_power PHASE STAGE SINCE ESTIMATE  (phase: on off st
 do_power_on() {
   local t0 est stage elapsed pid
   t0=$(date +%s)
-  est=$(cat "$PRIV/power.last" 2>/dev/null); [[ "$est" =~ ^[0-9]+$ ]] && [ "$est" -gt 0 ] || est=90
+  # Countdown: the previous start plus 30 s of margin (Plex needs a moment after it first answers)
+  est=$(cat "$PRIV/power.last" 2>/dev/null); [[ "$est" =~ ^[0-9]+$ ]] && [ "$est" -gt 0 ] && est=$((est + 30)) || est=120
   if stack_up; then publish_power on "Plex is running" 0 0; echo "already running"; return 0; fi
   publish_power starting "starting containers" "$t0" "$est"
   bash "$STACK_DIR/scripts/start.sh" >/dev/null 2>&1 &

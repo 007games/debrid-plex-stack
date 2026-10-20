@@ -683,7 +683,7 @@ POWER_JS = r"""(function () {
     var fromHost = s.phase === ph && s.since > 0;
     var t0 = fromHost ? s.since : (tap ? tap.t0 : now());
     if (fromHost && tap && tap.t0 < t0) t0 = tap.t0;
-    var est = fromHost && s.estimate ? s.estimate : (ph === "stopping" ? 15 : (s.last_start_secs || 90));
+    var est = fromHost && s.estimate ? s.estimate : (ph === "stopping" ? 15 : (s.last_start_secs ? s.last_start_secs + 30 : 120));
     var left = Math.ceil(est - (now() - t0));
     count.textContent = left > 0 ? left : "…";
     unit.textContent = left > 0 ? "seconds" : (ph === "starting" ? "almost there" : "finishing");
