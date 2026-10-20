@@ -102,6 +102,62 @@ do_duplicates() {  # do_duplicates [--remove-exact]
   put "$PRIV/duplicates.json" duplicates.json
 }
 
+# Power switch for the page's red/green buttons. power_on follows the start-up
+# and publishes power.json (phase, stage, estimate) until Plex really answers.
+plex_answers() {
+  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://$(envval LAN_IP):32400/identity")" = 200 ]
+}
+mount_quick() { grep -q " $MNT fuse" /proc/mounts && timeout 5 ls "$MNT/$PROBE" >/dev/null 2>&1; }
+stack_up() { [ ! -f "$STACK_DIR/STOPPED" ] && all_running && mount_quick && plex_answers; }
+
+publish_power() {  # publish_power PHASE STAGE SINCE ESTIMATE  (phase: on off starting stopping degraded)
+  local last
+  last=$(cat "$PRIV/power.last" 2>/dev/null); [[ "$last" =~ ^[0-9]+$ ]] || last=0
+  printf '{"phase": "%s", "stage": "%s", "since": %d, "estimate": %d, "last_start_secs": %d, "updated": %d}\n' \
+    "$1" "$(printf '%s' "$2" | tr -dc 'A-Za-z0-9 ._:()/-')" "${3:-0}" "${4:-0}" "$last" "$(date +%s)" >"$PRIV/power.json"
+  cp "$PRIV/power.json" "$PRIV/power.pub" && put "$PRIV/power.pub" power.json
+}
+
+do_power_on() {
+  local t0 est stage elapsed pid
+  t0=$(date +%s)
+  est=$(cat "$PRIV/power.last" 2>/dev/null); [[ "$est" =~ ^[0-9]+$ ]] && [ "$est" -gt 0 ] || est=90
+  if stack_up; then publish_power on "Plex is running" 0 0; echo "already running"; return 0; fi
+  publish_power starting "starting containers" "$t0" "$est"
+  bash "$STACK_DIR/scripts/start.sh" >/dev/null 2>&1 &
+  pid=$!
+  while :; do
+    elapsed=$(( $(date +%s) - t0 ))
+    if stack_up; then
+      wait "$pid" 2>/dev/null
+      echo "$elapsed" >"$PRIV/power.last"
+      publish_power on "Plex is running" 0 0
+      echo "up after ${elapsed}s"; return 0
+    fi
+    [ "$elapsed" -ge 300 ] && break
+    stage="starting containers"
+    container_running "$MOUNTER" && stage="connecting the library"
+    mount_quick && stage="starting Plex"
+    container_running plex && mount_quick && stage="waiting for Plex to answer"
+    publish_power starting "$stage" "$t0" "$est"
+    sleep 2
+  done
+  wait "$pid" 2>/dev/null
+  publish_power degraded "not fully up after ${elapsed}s - the watchdog keeps trying" 0 0
+  echo "not fully up after ${elapsed}s"; return 1
+}
+
+do_power_off() {
+  if [ -f "$STACK_DIR/STOPPED" ] && ! container_running plex; then
+    publish_power off "stopped" 0 0; echo "already off"; return 0
+  fi
+  publish_power stopping "stopping Plex and the library" "$(date +%s)" 15
+  bash "$STACK_DIR/scripts/stop.sh" --keep-page >/dev/null 2>&1 \
+    || { publish_power degraded "stop failed - see the log" 0 0; echo "stop failed"; return 1; }
+  publish_power off "stopped" 0 0
+  echo "stopped"
+}
+
 # ------------------------------------------------------------------ requests
 
 # Leftovers from an interrupted write (the page writes .tmp, then renames to .req)
@@ -136,6 +192,8 @@ for f in "$REQ"/*.req; do
     restart)         out=$(compose restart 2>&1) || rc=1; [ $rc = 0 ] && out="restarted" ;;
     maintenance_on)  touch "$STACK_DIR/MAINTENANCE"; out="watchdog paused" ;;
     maintenance_off) rm -f "$STACK_DIR/MAINTENANCE"; out="watchdog active" ;;
+    power_on)        out=$(do_power_on 2>&1) || rc=1 ;;
+    power_off)       out=$(do_power_off 2>&1) || rc=1 ;;
     plex_setup)      out=$(bash "$STACK_DIR/scripts/plex-setup.sh" 2>&1) || rc=1 ;;
     backup)          out=$(do_backup 2>&1) || rc=1 ;;
     scan_duplicates) out=$(do_duplicates 2>&1) || rc=1 ;;
@@ -228,6 +286,11 @@ fi
   printf '  "expiry_warn_days": %d,\n' "$WARN_DAYS"
   printf '  "account": %s\n}\n' "$ACCOUNT"
 } >"$PRIV/status.json" && put "$PRIV/status.json" status.json
+
+# Power switch state for the page (power_on/power_off publish the in-between phases)
+if [ -f "$STACK_DIR/STOPPED" ]; then publish_power off "stopped" 0 0
+elif stack_up; then publish_power on "Plex is running" 0 0
+else publish_power degraded "not fully running" 0 0; fi
 
 tail -n 100 "$LOG" 2>/dev/null >"$PRIV/log.txt" && put "$PRIV/log.txt" log.txt
 

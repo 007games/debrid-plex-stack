@@ -32,6 +32,8 @@ REQUESTS, STATE, AUTH = DATA / "requests", DATA / "state", DATA / "auth"
 PORT = int(os.environ.get("ADMIN_PORT", "8099"))
 
 SESSION_IDLE = 30 * 60          # seconds of inactivity before logout
+REMEMBER_IDLE = 30 * 24 * 3600  # "keep me signed in" (the phone with the power switch)
+SAFE_NEXT = ("/power",)         # pages a login may return to
 MAX_FAILS, LOCK_SECS = 5, 15 * 60
 PBKDF2_ITER = 600_000
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
@@ -222,6 +224,7 @@ def status_body(session):
 </div><p class="muted">Library: {items or "–"} · key ending …{e(s.get("key_hint", "") or "?")} · updated {e(s.get("updated", ""))}</p></div>
 <div class="card"><h2>Containers</h2><div class="grid">{containers}</div></div>
 <div class="card"><h2>Actions</h2>
+<p style="margin:0 0 10px"><a href="/power">Power switch</a>: one green and one red button, made for your phone.</p>
 {button(session, "restart", "Restart stack")}
 {button(session, "maintenance_off" if maint else "maintenance_on", "Resume watchdog" if maint else "Pause watchdog (maintenance)", secondary=True)}
 {button(session, "plex_setup", "Re-apply Plex settings", secondary=True)}
@@ -352,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
         token = cookie["sid"].value if "sid" in cookie else ""
         with lock:
             s = sessions.get(token)
-            if s and time.time() - s["seen"] < SESSION_IDLE:
+            if s and time.time() - s["seen"] < s.get("idle", SESSION_IDLE):
                 s["seen"] = time.time()
                 return token, s
             sessions.pop(token, None)
@@ -379,9 +382,16 @@ class Handler(BaseHTTPRequestHandler):
         token, s = self.session()
         if not s:
             if path == "/login":
-                return self.send(200, login_page())
-            return self.redirect("/login")
+                nxt = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("next", [""])[0]
+                return self.send(200, login_page(nxt=nxt if nxt in SAFE_NEXT else ""))
+            return self.redirect(("/login?next=" + urllib.parse.quote(path)) if path in SAFE_NEXT else "/login")
         flash = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("m", [""])[0][:200]
+        if path == "/power":
+            return self.send(200, power_page(s), headers={"Content-Security-Policy": POWER_CSP})
+        if path == "/power.js":
+            return self.send(200, POWER_JS, "text/javascript; charset=utf-8")
+        if path == "/power/status":
+            return self.send(200, json.dumps(power_status()), "application/json")
         if path == "/":
             return self.send(200, page("Status", status_body(s), s, flash))
         if path == "/keys":
@@ -438,10 +448,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(429, login_page("Too many failed attempts. Try again in 15 minutes."))
         if check_password(f.get("password", "")):
             token = secrets.token_urlsafe(32)
+            idle = REMEMBER_IDLE if f.get("remember") == "yes" else SESSION_IDLE
             with lock:
                 fails.clear()
-                sessions[token] = {"csrf": secrets.token_urlsafe(32), "seen": time.time()}
-            return self.redirect("/", {"Set-Cookie": self.cookie(token, SESSION_IDLE)})
+                sessions[token] = {"csrf": secrets.token_urlsafe(32), "seen": time.time(), "idle": idle}
+            nxt = f.get("next", "")
+            return self.redirect(nxt if nxt in SAFE_NEXT else "/", {"Set-Cookie": self.cookie(token, idle)})
         record_fail()
         return self.send(401, login_page("Wrong password."))
 
@@ -486,6 +498,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def action(self, f):
         action, value = f.get("action", ""), f.get("value", "").strip()
+        if action in ("power_on", "power_off"):
+            if not any(a in ("power_on", "power_off") for a in pending_actions()):
+                queue(action, "")
+            if self.headers.get("X-Requested-With") == "fetch":
+                return self.send(200, json.dumps(power_status()), "application/json")
+            return self.redirect("/power")
         back = "/keys" if action in ("set_rd_token", "set_torbox_key", "switch_provider") else "/"
         if action == "backup":
             back = "/backups"
@@ -508,11 +526,237 @@ DEMO_URL = os.environ.get("ADMIN_DEMO_URL", "/demo")
 DEMO_DIR = Path(os.environ.get("ADMIN_DEMO_DIR", "/app/demo"))
 
 
-def login_page(msg=""):
+# ------------------------------------------------------------------ power switch
+# A phone-sized page with one green and one red button. The buttons queue power_on /
+# power_off; scripts/agent.sh applies them and publishes power.json while it works.
+
+POWER_CSP = ("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; "
+             "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+
+POWER_TEXT = {
+    "on": ("Plex is running", "Ready to watch"),
+    "off": ("Plex is off", "Tap the green button to start it"),
+    "starting": ("Starting Plex…", "waiting for the host"),
+    "stopping": ("Stopping Plex…", "closing Plex and the library"),
+    "degraded": ("Not fully running", "The watchdog is trying to repair it"),
+    "unknown": ("Checking…", ""),
+}
+
+
+def pending_actions():
+    """Names of the requests waiting in the inbox (oldest first)."""
+    acts = []
+    for f in sorted(REQUESTS.glob("*.req")):
+        try:
+            for line in f.read_text().splitlines():
+                if line.startswith("action="):
+                    acts.append(line[7:].strip())
+                    break
+        except OSError:
+            pass
+    return acts
+
+
+def power_status():
+    p, st = read_json("power.json"), read_json("status.json")
+    busy = read_text("busy.txt").split("\t")[0].strip()
+    try:  # a leftover busy marker from a crashed run must not show "starting" forever
+        if time.time() - (STATE / "busy.txt").stat().st_mtime > 900:
+            busy = ""
+    except OSError:
+        busy = ""
+
+    def num(k):
+        v = p.get(k)
+        return v if isinstance(v, int) and v >= 0 else 0
+    return {"phase": p.get("phase") if p.get("phase") in POWER_TEXT else "unknown",
+            "stage": str(p.get("stage", ""))[:120],
+            "since": num("since"), "estimate": num("estimate"), "last_start_secs": num("last_start_secs"),
+            "updated": num("updated"),
+            "busy": busy if busy in ("power_on", "power_off") else "",
+            "pending": [a for a in pending_actions() if a in ("power_on", "power_off")],
+            "containers": st.get("containers", {}) if isinstance(st.get("containers"), dict) else {},
+            "now": int(time.time())}
+
+
+POWER_CSS = """
+:root{color-scheme:light dark;--bg:#f4f5f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7ef;--on:#16a34a;--on-2:#22c55e;--off:#dc2626;--off-2:#ef4444;--amber:#d97706}
+@media(prefers-color-scheme:dark){:root{--bg:#0b0d12;--card:#12151d;--fg:#e8eaf0;--muted:#8d95a8;--line:#242a38;--on:#22c55e;--on-2:#4ade80;--off:#ef4444;--off-2:#f87171;--amber:#fbbf24}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+.pw{max-width:420px;margin:0 auto;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:max(16px,env(safe-area-inset-top)) 20px max(28px,env(safe-area-inset-bottom))}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+header a{color:var(--muted);text-decoration:none;font-size:14px;padding:6px 0}
+h1{font-size:20px;margin:0;letter-spacing:-.01em}
+.state{display:flex;align-items:center;gap:14px;margin:26px 0 0;padding:16px 18px;background:var(--card);border:1px solid var(--line);border-radius:18px}
+.dot{width:14px;height:14px;border-radius:50%;background:var(--muted);flex:none;box-shadow:0 0 0 4px color-mix(in srgb,var(--muted) 18%,transparent)}
+[data-phase=on] .dot{background:var(--on);box-shadow:0 0 0 4px color-mix(in srgb,var(--on) 22%,transparent)}
+[data-phase=off] .dot{background:var(--off);box-shadow:0 0 0 4px color-mix(in srgb,var(--off) 22%,transparent)}
+[data-phase=starting] .dot,[data-phase=stopping] .dot,[data-phase=degraded] .dot{background:var(--amber);box-shadow:0 0 0 4px color-mix(in srgb,var(--amber) 22%,transparent)}
+[data-phase=starting] .dot,[data-phase=stopping] .dot{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.state b{display:block;font-size:17px}
+.state span{display:block;color:var(--muted);font-size:14px;min-height:21px}
+.ring{position:relative;width:200px;height:200px;margin:30px auto 0}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:9;stroke-linecap:round}
+.ring .track{stroke:var(--line)}
+.ring .bar{stroke:var(--on);transition:stroke-dashoffset .5s linear}
+[data-phase=stopping] .ring .bar{stroke:var(--off)}
+.ring .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring .num b{font-size:54px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.ring .num small{color:var(--muted);font-size:13px;margin-top:6px}
+.ring[hidden]{display:none}
+.btns{display:flex;justify-content:center;gap:36px;margin:auto 0 0;padding-top:30px}
+.btns form{display:flex;flex-direction:column;align-items:center;gap:10px;margin:0;font-size:14px;color:var(--muted);font-weight:600}
+.big{width:118px;height:118px;border-radius:50%;border:0;color:#fff;cursor:pointer;display:grid;place-items:center;transition:transform .12s ease,filter .2s,opacity .2s;-webkit-appearance:none;appearance:none;touch-action:manipulation;padding:0}
+.big:active{transform:scale(.94)}
+.big:disabled{filter:grayscale(.8);opacity:.35;cursor:default;box-shadow:none}
+.big svg{width:46px;height:46px;fill:currentColor}
+.on{background:linear-gradient(145deg,var(--on-2),var(--on));box-shadow:0 14px 30px -12px var(--on)}
+.off{background:linear-gradient(145deg,var(--off-2),var(--off));box-shadow:0 14px 30px -12px var(--off)}
+.hint{text-align:center;color:var(--muted);font-size:13px;margin:22px 0 0;min-height:20px}
+noscript p{text-align:center;color:var(--muted);font-size:13px}
+@media(prefers-reduced-motion:reduce){.dot{animation:none!important}.ring .bar{transition:none}}
+"""
+
+POWER_JS = r"""(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var pw = $("pw"), label = $("label"), stage = $("stage"), ring = $("ring"), bar = $("bar");
+  var count = $("count"), unit = $("unit"), hint = $("hint"), bOn = $("b-on"), bOff = $("b-off");
+  var TEXT = JSON.parse(pw.dataset.text);
+  var C = 2 * Math.PI * 54;
+  bar.style.strokeDasharray = C; bar.style.strokeDashoffset = C;
+  var tap = null;        // {phase, t0}: what the last tap asked for, until the host confirms it
+  var stale = false;     // the host never picked the tap up
+  var offset = 0;        // server clock minus phone clock (seconds)
+  var state = null, tickTimer = null, pollTimer = null;
+
+  function now() { return Date.now() / 1000 + offset; }
+
+  // Effective phase: the inbox and the busy marker are the host's truth; a tap counts
+  // for 15 s (until the host has picked it up), unless the host is already done
+  function phaseOf(s) {
+    var q = s.pending || [], ph = s.phase || "unknown";
+    if (s.busy === "power_on" || q.indexOf("power_on") >= 0) ph = "starting";
+    else if (s.busy === "power_off" || q.indexOf("power_off") >= 0) ph = "stopping";
+    if (tap) {
+      var done = (tap.phase === "starting" && ph === "on") || (tap.phase === "stopping" && ph === "off");
+      if (ph === tap.phase) return ph;
+      if (done) { tap = null; return ph; }
+      if (now() - tap.t0 < 15 && ph !== "starting" && ph !== "stopping") return tap.phase;
+      stale = ph !== "starting" && ph !== "stopping";
+      tap = null;
+    }
+    return ph;
+  }
+
+  function render(s) {
+    state = s;
+    if (s.now) offset = s.now - Date.now() / 1000;
+    var ph = phaseOf(s), busy = ph === "starting" || ph === "stopping";
+    pw.dataset.phase = ph;
+    label.textContent = (TEXT[ph] || TEXT.unknown)[0];
+    stage.textContent = busy && s.phase === ph && s.stage ? s.stage : (TEXT[ph] || TEXT.unknown)[1];
+    bOn.disabled = ph === "on" || busy;
+    bOff.disabled = ph === "off" || busy;
+    if (busy) {
+      ring.hidden = false; tick();
+      if (!tickTimer) tickTimer = setInterval(tick, 250);
+    } else {
+      ring.hidden = true;
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      bar.style.strokeDashoffset = C;
+    }
+    if (stale) hint.textContent = "The host has not picked this up. Is the watchdog task running?";
+    else if (ph === "on" && s.last_start_secs) hint.textContent = "Last start took " + s.last_start_secs + " seconds.";
+    else if (ph === "degraded") hint.textContent = "If this stays for a few minutes, tap Start again or check the log.";
+    else hint.textContent = "";
+    schedule(busy ? 2000 : 10000);
+  }
+
+  // Countdown: from the host's own start time once it has one, else from the tap
+  function tick() {
+    var s = state, ph = pw.dataset.phase;
+    var fromHost = s.phase === ph && s.since > 0;
+    var t0 = fromHost ? s.since : (tap ? tap.t0 : now());
+    if (fromHost && tap && tap.t0 < t0) t0 = tap.t0;
+    var est = fromHost && s.estimate ? s.estimate : (ph === "stopping" ? 15 : (s.last_start_secs || 90));
+    var left = Math.ceil(est - (now() - t0));
+    count.textContent = left > 0 ? left : "…";
+    unit.textContent = left > 0 ? "seconds" : (ph === "starting" ? "almost there" : "finishing");
+    bar.style.strokeDashoffset = C * (1 - Math.min(1, (now() - t0) / est));
+  }
+
+  function schedule(ms) { if (pollTimer) clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
+  function poll() {
+    fetch("/power/status", { credentials: "same-origin", headers: { "Accept": "application/json" } })
+      .then(function (r) {
+        if (r.redirected || (r.headers.get("content-type") || "").indexOf("json") < 0) { location.reload(); throw 0; }
+        return r.json();
+      })
+      .then(render)
+      .catch(function () { stage.textContent = "connection lost, retrying…"; schedule(4000); });
+  }
+
+  function arm(form, phase, ask) {
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      if (ask && !window.confirm(ask)) return;
+      tap = { phase: phase, t0: now() }; stale = false;
+      form.querySelector("button").disabled = true;
+      fetch("/action", { method: "POST", body: new URLSearchParams(new FormData(form)), credentials: "same-origin",
+                         headers: { "X-Requested-With": "fetch", "Accept": "application/json" } })
+        .then(function (r) { if (!r.ok || r.redirected) throw 0; return r.json(); })
+        .then(render)
+        .catch(function () { location.reload(); });
+    });
+  }
+  arm($("f-on"), "starting", null);
+  arm($("f-off"), "stopping", "Stop Plex? Anyone watching right now is cut off.");
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
+  render(JSON.parse(pw.dataset.state));
+})();
+"""
+
+
+def power_page(session):
+    e = html.escape
+    s = power_status()
+    ph = s["phase"]
+    if s["busy"] == "power_on" or "power_on" in s["pending"]:
+        ph = "starting"
+    elif s["busy"] == "power_off" or "power_off" in s["pending"]:
+        ph = "stopping"
+    title, sub = POWER_TEXT[ph]
+    play = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+    stop = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-title" content="Plex"><meta name="format-detection" content="telephone=no">
+<title>Plex power · debrid</title><style>{POWER_CSS}</style></head>
+<body><main class="pw" id="pw" data-phase="{e(ph)}" data-state='{e(json.dumps(s))}' data-text='{e(json.dumps(POWER_TEXT))}'>
+<header><a href="/">‹ Management page</a><h1>Plex power</h1><a href="/power" aria-label="Refresh">↻</a></header>
+<div class="state"><div class="dot"></div><div><b id="label">{e(title)}</b><span id="stage">{e(sub)}</span></div></div>
+<div class="ring" id="ring" hidden><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="54"/><circle class="bar" id="bar" cx="60" cy="60" r="54"/></svg>
+<div class="num"><b id="count">–</b><small id="unit">seconds</small></div></div>
+<div class="btns">
+<form method="post" action="/action" id="f-on">{csrf_field(session)}<input type="hidden" name="action" value="power_on"><button class="big on" id="b-on" aria-label="Start Plex"{" disabled" if ph in ("on", "starting", "stopping") else ""}>{play}</button>Start</form>
+<form method="post" action="/action" id="f-off">{csrf_field(session)}<input type="hidden" name="action" value="power_off"><button class="big off" id="b-off" aria-label="Stop Plex"{" disabled" if ph in ("off", "starting", "stopping") else ""}>{stop}</button>Stop</form>
+</div>
+<p class="hint" id="hint"></p>
+<noscript><p>Without JavaScript the buttons still work; reload the page to see the result.</p></noscript>
+</main><script src="/power.js" defer></script></body></html>"""
+
+
+def login_page(msg="", nxt=""):
     m = f'<p class="bad">{html.escape(msg)}</p>' if msg else ""
     return page("Log in", f"""<div class="card" style="max-width:380px;margin:40px auto">
 <h2>Log in</h2>{m}<form method="post" action="/login">
 <label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
+<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:10px 0 14px"><input type="checkbox" name="remember" value="yes" style="width:auto;margin:0"> Keep me signed in on this device (30 days)</label><input type="hidden" name="next" value="{html.escape(nxt)}">
 <p><button>Log in</button></p></form><p class="muted">Only reachable from your home network.</p>
 <p><a href="{html.escape(DEMO_URL)}" target="_blank" rel="noopener noreferrer">How it works: live map ↗</a></p></div>""")
 

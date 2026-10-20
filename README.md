@@ -36,7 +36,7 @@ DSM warns about running as root and asks for your password; confirm both. Instal
 
 ## Stop and start
 
-`sudo bash scripts/stop.sh` stops everything (Plex, zurg, rclone, the page) and **keeps it stopped**, also after a reboot: the watchdog and boot task leave it alone. `sudo bash scripts/start.sh` brings it back. Stopping containers in Container Manager or with `docker stop` doesn't stick: the watchdog restarts them within a couple of minutes (use *Pause watchdog* on the management page if you need that).
+`sudo bash scripts/stop.sh` stops everything (Plex, zurg, rclone, the page) and **keeps it stopped**, also after a reboot: the watchdog and boot task leave it alone. `sudo bash scripts/start.sh` brings it back. `stop.sh --keep-page` does the same but leaves the management page running, so its power switch can start the stack again. Stopping containers in Container Manager or with `docker stop` doesn't stick: the watchdog restarts them within a couple of minutes (use *Pause watchdog* on the management page if you need that).
 
 ## Moving to another machine
 
@@ -83,11 +83,12 @@ The installer offers a small web page at `https://<server-ip>:8099` (LAN only, p
 - restart the stack, pause the watchdog, and download library backups,
 - find duplicates in your Real-Debrid library: remove identical copies in one go, and review titles that exist in several versions,
 - change the page's own password,
-- get a warning bar (and a daily log line) when premium has 7 days or less left; set `EXPIRY_WARN_DAYS` in `.env` to change that.
+- get a warning bar (and a daily log line) when premium has 7 days or less left; set `EXPIRY_WARN_DAYS` in `.env` to change that,
+- a **power switch** at `https://<server-ip>:8099/power`: one green and one red button, sized for a phone. Red stops Plex and the library (the page itself stays up); green starts them again and shows a countdown, timed from the previous start. Tick *Keep me signed in* when you log in on the phone and add the page to your home screen.
 
 The browser will warn once about the self-signed certificate; that's expected.
 
-The page has no Docker access and can't change the stack itself: it only queues requests, which a root script on the host (`scripts/agent.sh`) validates against a whitelist and applies within a minute (instantly on systemd). Set it up later, or reset a forgotten password, with `sudo bash scripts/admin-setup.sh`.
+The page has no Docker access and can't change the stack itself: it only queues requests, which a root script on the host (`scripts/agent.sh`) validates against a whitelist and applies within a few seconds. Set it up later, or reset a forgotten password, with `sudo bash scripts/admin-setup.sh`.
 
 ## Commands
 
