@@ -34,6 +34,10 @@ PORT = int(os.environ.get("ADMIN_PORT", "8099"))
 SESSION_IDLE = 30 * 60          # seconds of inactivity before logout
 REMEMBER_IDLE = 30 * 24 * 3600  # "keep me signed in" (the phone with the power switch)
 SAFE_NEXT = ("/power",)         # pages a login may return to
+# Page shown after login; set ADMIN_HOME=/power in .env to land on the power switch
+HOME = os.environ.get("ADMIN_HOME", "/")
+if not re.match(r"^/[A-Za-z0-9/_-]*$", HOME):
+    HOME = "/"
 MAX_FAILS, LOCK_SECS = 5, 15 * 60
 PBKDF2_ITER = 600_000
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
@@ -461,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
                 fails.clear()
                 sessions[token] = {"csrf": secrets.token_urlsafe(32), "seen": time.time(), "idle": idle}
             nxt = f.get("next", "")
-            return self.redirect(nxt if nxt in SAFE_NEXT else "/", {"Set-Cookie": self.cookie(token, idle)})
+            return self.redirect(nxt if nxt in SAFE_NEXT else HOME, {"Set-Cookie": self.cookie(token, idle)})
         record_fail()
         return self.send(401, login_page("Wrong password."))
 

@@ -84,7 +84,7 @@ The installer offers a small web page at `https://<server-ip>:8099` (LAN only, p
 - find duplicates in your Real-Debrid library: remove identical copies in one go, and review titles that exist in several versions,
 - change the page's own password,
 - get a warning bar (and a daily log line) when premium has 7 days or less left; set `EXPIRY_WARN_DAYS` in `.env` to change that,
-- a **power switch** at `https://<server-ip>:8099/power`: one green and one red button, sized for a phone. Red stops Plex and the library (the page itself stays up); green starts them again and shows a countdown, timed from the previous start. Tick *Keep me signed in* when you log in on the phone and add the page to your home screen.
+- a **power switch** at `https://<server-ip>:8099/power`: one green and one red button, sized for a phone. Red stops Plex and the library (the page itself stays up); green starts them again and shows a countdown, timed from the previous start. Tick *Keep me signed in* when you log in on the phone and add the page to your home screen. Put `ADMIN_HOME=/power` in `.env` (then `docker compose up -d admin`) to land on the switch right after login.
 
 The page has its own certificate authority, so browsers warn that the connection is "not private" until you install it: open **/certificate** on the page for the steps (iPhone, Android, Windows, Mac), or download it from `http://<server-ip>:8099/ca.crt`. The server certificate is renewed automatically; `sudo bash scripts/admin-cert.sh --new-ca` makes a fresh authority if you ever need one.
 
